@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Container,
   Grid,
@@ -16,18 +16,20 @@ import {
   Badge,
   styled,
 } from "@mui/material";
-import { Business } from "@mui/icons-material";
+import { Storage } from "@mui/icons-material";
 import { TimeRange } from "@/types/energy";
+import Image from "next/image";
+import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
 import ConsumptionCard from "./ConsumptionCard";
 import CostSavingChart from "./CostSavingChart";
-import AlertsCard from "./AlertsCard";
+import AlertsDropdown from "./AlertsDropdown";
 import SpaceEfficiencyCard from "./SpaceEfficiencyCard";
 import EnergyInefficiencyCard from "./EnergyInefficiencyCard";
 import BuildingFloorPlan from "./BuildingFloorPlan";
 import PropertiesMapDrawer from "./PropertiesMapDrawer";
-import SyncStatusCard from "./SyncStatusCard";
+import SyncStatusModal from "./SyncStatusModal";
 
-const DRAWER_WIDTH = 400;
+const DRAWER_WIDTH = 650;
 
 const Main = styled("main", { shouldForwardProp: (prop) => prop !== "open" })<{
   open?: boolean;
@@ -55,17 +57,44 @@ const Main = styled("main", { shouldForwardProp: (prop) => prop !== "open" })<{
 }));
 
 const EnergyDashboard = () => {
-  const [timeRange, setTimeRange] = useState<TimeRange>("month");
+  const { currentTimeRange, refreshEnergyData, energySummary } =
+    useEnergyData();
+  const { buildings } = useBuildingData();
   const [activeTab, setActiveTab] = useState(0);
   const [propertiesDrawerOpen, setPropertiesDrawerOpen] = useState(false);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [schedulerStatus, setSchedulerStatus] = useState<{
+    isRunning: boolean;
+    nextSyncTime?: string;
+  } | null>(null);
 
   const handleTimeRangeChange = (range: TimeRange) => {
-    setTimeRange(range);
+    refreshEnergyData(range);
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
   };
+
+  // Check scheduler status on component mount
+  useEffect(() => {
+    const checkSchedulerStatus = async () => {
+      try {
+        const response = await fetch("/api/sync/scheduler");
+        const result = await response.json();
+        if (result.success) {
+          setSchedulerStatus(result.data);
+        }
+      } catch (error) {
+        console.error("Failed to get scheduler status:", error);
+      }
+    };
+
+    checkSchedulerStatus();
+    // Check scheduler status periodically
+    const interval = setInterval(checkSchedulerStatus, 300000); // 5 minutes
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <Box sx={{ display: "flex" }}>
@@ -79,58 +108,203 @@ const EnergyDashboard = () => {
               mb: 3,
             }}
           >
-            <Typography variant="h4" component="h1" gutterBottom>
-              Energy Efficiency Monitor
-            </Typography>
-            <IconButton
-              onClick={() => setPropertiesDrawerOpen(true)}
-              sx={{
-                bgcolor: "primary.main",
-                color: "white",
-                "&:hover": { bgcolor: "primary.dark" },
-              }}
-            >
-              <Badge badgeContent={3} color="error">
-                <Business />
-              </Badge>
-            </IconButton>
-          </Box>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <Image
+                src="/logo.svg"
+                alt="Energy App Logo"
+                width={44}
+                height={44}
+              />
 
-          <Box sx={{ mb: 3 }}>
-            <ButtonGroup variant="outlined" sx={{ mb: 2 }}>
-              {(["month", "week", "day", "hour"] as TimeRange[]).map(
-                (range) => (
-                  <Button
-                    key={range}
-                    variant={timeRange === range ? "contained" : "outlined"}
-                    onClick={() => handleTimeRangeChange(range)}
-                    sx={{ textTransform: "capitalize" }}
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                <ButtonGroup variant="text" sx={{ gap: 0, border: "none" }}>
+                  {(["month", "week", "day", "hour"] as TimeRange[]).map(
+                    (range) => (
+                      <Button
+                        key={range}
+                        onClick={() => handleTimeRangeChange(range)}
+                        sx={{
+                          textTransform: "capitalize",
+                          color:
+                            currentTimeRange === range
+                              ? "primary.main"
+                              : "text.secondary",
+                          borderBottom:
+                            currentTimeRange === range ? "3px solid" : "none",
+                          borderColor: "primary.main",
+                          borderLeft: "none!important",
+                          borderRight: "none!important",
+                          borderRadius: 0,
+                          minWidth: "auto",
+                          "&:hover": {
+                            backgroundColor: "action.hover",
+                          },
+                          fontWeight: 600,
+                        }}
+                      >
+                        {range}
+                      </Button>
+                    )
+                  )}
+                </ButtonGroup>
+              </Box>
+            </Box>
+
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              {energySummary && energySummary.total_records > 0 && (
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    mr: 2,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                      fontSize: "0.8rem",
+                      color: "success.main",
+                      fontWeight: 600,
+                    }}
                   >
-                    {range}
-                  </Button>
-                )
+                    <Box
+                      sx={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        bgcolor: "success.main",
+                        animation: "pulse 2s infinite",
+                        "@keyframes pulse": {
+                          "0%": { opacity: 1 },
+                          "50%": { opacity: 0.5 },
+                          "100%": { opacity: 1 },
+                        },
+                      }}
+                    />
+                    {energySummary.total_records} sensors live
+                  </Box>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontSize: "0.7rem",
+                      color: "text.secondary",
+                    }}
+                  >
+                    Last sync:{" "}
+                    {new Date(energySummary.latest_record).toLocaleString()}
+                  </Typography>
+                </Box>
               )}
-            </ButtonGroup>
+
+              {buildings.length > 0 && (
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    mr: 2,
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontSize: "0.75rem",
+                      color: "text.secondary",
+                    }}
+                  >
+                    {buildings.length} buildings connected
+                  </Typography>
+                  {schedulerStatus?.isRunning && (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                      <Box
+                        component="span"
+                        sx={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: "50%",
+                          bgcolor: "success.main",
+                          animation: "pulse 2s infinite",
+                          "@keyframes pulse": {
+                            "0%": { opacity: 1 },
+                            "50%": { opacity: 0.5 },
+                            "100%": { opacity: 1 },
+                          },
+                        }}
+                      />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: "0.7rem",
+                          color: "success.main",
+                        }}
+                      >
+                        Auto-sync every hour
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+
+              <AlertsDropdown />
+
+              <IconButton
+                onClick={() => setSyncModalOpen(true)}
+                sx={{
+                  border: 1,
+                  borderColor: "#DBDBDB",
+                  backgroundColor: "#ffffff",
+                }}
+                title="Data Sync Status"
+              >
+                <Storage />
+              </IconButton>
+
+              <IconButton
+                onClick={() => {}}
+                sx={{
+                  border: 1,
+                  borderColor: "#DBDBDB",
+                  backgroundColor: "#ffffff",
+                }}
+              >
+                <Image src="/ai.svg" alt="Location" width={24} height={24} />
+              </IconButton>
+
+              <IconButton
+                onClick={() => setPropertiesDrawerOpen(true)}
+                sx={{
+                  border: 1,
+                  borderColor: "#DBDBDB",
+                  backgroundColor: "#ffffff",
+                }}
+              >
+                <Badge badgeContent={buildings.length} color="primary">
+                  <Image
+                    src="/location.svg"
+                    alt="Location"
+                    width={24}
+                    height={24}
+                  />
+                </Badge>
+              </IconButton>
+            </Box>
           </Box>
 
           <Grid container spacing={3}>
             <Grid size={{ xs: 12, md: 6 }}>
-              <ConsumptionCard timeRange={timeRange} />
+              <ConsumptionCard />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
-              <CostSavingChart timeRange={timeRange} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <AlertsCard />
+              <CostSavingChart />
             </Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <SpaceEfficiencyCard />
             </Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <EnergyInefficiencyCard />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <SyncStatusCard />
             </Grid>
           </Grid>
 
@@ -161,6 +335,11 @@ const EnergyDashboard = () => {
         open={propertiesDrawerOpen}
         onClose={() => setPropertiesDrawerOpen(false)}
         drawerWidth={DRAWER_WIDTH}
+      />
+
+      <SyncStatusModal
+        open={syncModalOpen}
+        onClose={() => setSyncModalOpen(false)}
       />
     </Box>
   );

@@ -10,50 +10,7 @@ interface BuildingFloorPlanProps {
   floorId: number;
 }
 
-const mockFloorData = [
-  {
-    id: 0,
-    name: 'Lobby',
-    rooms: [
-      { id: '1', name: 'LOBBY AREA', temperature: 72, area: 45, x: 10, y: 10, width: 200, height: 100 }
-    ],
-    utilization: [
-      { name: 'Floor 1', percentage: 92 },
-      { name: 'Floor 3', percentage: 88 },
-      { name: 'Lobby', percentage: 72 },
-      { name: 'Floor 2', percentage: 65 }
-    ],
-    spaceUtilization: [
-      { name: 'Conference room - Big', percentage: 92 },
-      { name: 'Conference room - Small', percentage: 72 },
-      { name: 'Office 1', percentage: 88 },
-      { name: 'Office 2', percentage: 65 }
-    ]
-  },
-  {
-    id: 1,
-    name: 'Floor 1',
-    rooms: [
-      { id: '1', name: 'CONFERENCE ROOM - SMALL', temperature: 77, area: 16, x: 10, y: 10, width: 180, height: 120 },
-      { id: '2', name: 'OFFICE 1', temperature: 73.4, area: 12, x: 200, y: 10, width: 150, height: 80 },
-      { id: '3', name: 'CONFERENCE ROOM - BIG', temperature: 82.4, area: 22, x: 10, y: 140, width: 180, height: 120 },
-      { id: '4', name: 'HALLWAY', temperature: 70, area: 3, x: 200, y: 100, width: 80, height: 160 },
-      { id: '5', name: 'OFFICE 2', temperature: 68, area: 10.8, x: 290, y: 140, width: 150, height: 120 }
-    ],
-    utilization: [
-      { name: 'Floor 1', percentage: 92 },
-      { name: 'Floor 3', percentage: 88 },
-      { name: 'Lobby', percentage: 72 },
-      { name: 'Floor 2', percentage: 65 }
-    ],
-    spaceUtilization: [
-      { name: 'Conference room - Big', percentage: 92 },
-      { name: 'Conference room - Small', percentage: 72 },
-      { name: 'Office 1', percentage: 88 },
-      { name: 'Office 2', percentage: 65 }
-    ]
-  }
-];
+// Removed mock data - component now only displays real building/floor data
 
 const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
   const { data: buildingsData, loading: buildingsLoading, error: buildingsError } = useQuery(GET_BUILDINGS, {
@@ -64,14 +21,14 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
     errorPolicy: 'ignore'
   });
 
-  // Determine which data to use
+  // Determine which data to use - only real data
   const loading = buildingsLoading || floorsLoading;
   const error = buildingsError || floorsError;
   
-  let currentFloor = mockFloorData[floorId] || mockFloorData[0];
-  let dataSource = 'demo';
+  let currentFloor = null;
+  let dataSource = 'mapped-api';
   
-  // Try to use real floor data if available
+  // Use real floor data if available
   if (floorsData?.floors && Array.isArray(floorsData.floors) && floorsData.floors.length > floorId) {
     const realFloor = floorsData.floors[floorId];
     if (realFloor) {
@@ -88,8 +45,8 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
           width: 140,
           height: 90
         })) || [],
-        utilization: mockFloorData[0].utilization,
-        spaceUtilization: mockFloorData[0].spaceUtilization
+        utilization: [],
+        spaceUtilization: []
       };
       dataSource = 'floors';
     }
@@ -111,13 +68,27 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
           width: 140,
           height: 90
         })) || [],
-        utilization: mockFloorData[0].utilization,
-        spaceUtilization: mockFloorData[0].spaceUtilization
+        utilization: [],
+        spaceUtilization: []
       };
       dataSource = 'buildings';
     }
   }
   
+  // Return early if no floor data available
+  if (!currentFloor) {
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 400, textAlign: 'center' }}>
+        <Typography variant="h6" color="text.secondary" gutterBottom>
+          No Floor Plan Available
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Waiting for real building floor data from Mapped.com...
+        </Typography>
+      </Box>
+    );
+  }
+
   const occupancyPercentage = 68;
   const peopleCount = 144;
 
@@ -158,16 +129,32 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             <Chip label="LIVE" color="error" size="small" sx={{ mt: 1 }} />
           </Box>
           <Box sx={{ textAlign: 'center' }}>
-            <Chip 
-              label={
-                dataSource === 'floors' ? `Floor Data` :
-                dataSource === 'buildings' ? `Building Data` :
-                "Demo Layout"
-              } 
-              size="small" 
-              color={dataSource !== 'demo' ? "success" : "default"}
-              variant="outlined"
-            />
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Chip 
+                label={
+                  dataSource === 'floors' ? `Floor Data` :
+                  dataSource === 'buildings' ? `Building Data` :
+                  "Mapped.com API"
+                } 
+                size="small" 
+                color="primary"
+                variant="outlined"
+              />
+              <Box
+                sx={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  bgcolor: "success.main",
+                  animation: "pulse 2s infinite",
+                  "@keyframes pulse": {
+                    "0%": { opacity: 1 },
+                    "50%": { opacity: 0.5 },
+                    "100%": { opacity: 1 },
+                  },
+                }}
+              />
+            </Box>
             <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
               {currentFloor.rooms?.length || 0} spaces
             </Typography>

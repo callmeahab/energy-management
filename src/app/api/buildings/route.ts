@@ -109,35 +109,27 @@ export async function GET(request: NextRequest) {
       });
     }
     
-    // Get all buildings with basic stats
+    // Get all buildings with basic stats - simplified query for debugging
     const buildings = await runQuery(`
       SELECT 
-        b.id,
-        b.name,
-        b.description,
-        b.exact_type,
-        b.address_street,
-        b.address_city,
-        b.address_state,
-        b.address_country,
-        b.address_postal_code,
-        b.latitude,
-        b.longitude,
-        b.date_created,
-        b.date_updated,
-        b.floors_count,
-        b.spaces_count,
-        b.sync_timestamp,
-        COUNT(DISTINCT f.id) as actual_floors_count,
-        COUNT(DISTINCT s.id) as actual_spaces_count
-      FROM buildings b
-      LEFT JOIN floors f ON b.id = f.building_id
-      LEFT JOIN spaces s ON b.id = s.building_id
-      GROUP BY b.id, b.name, b.description, b.exact_type, b.address_street, 
-               b.address_city, b.address_state, b.address_country, b.address_postal_code,
-               b.latitude, b.longitude, b.date_created, b.date_updated, 
-               b.floors_count, b.spaces_count, b.sync_timestamp
-      ORDER BY b.name, b.id
+        id,
+        name,
+        description,
+        exact_type,
+        address_street,
+        address_city,
+        address_state,
+        address_country,
+        address_postal_code,
+        latitude,
+        longitude,
+        date_created,
+        date_updated,
+        floors_count,
+        spaces_count,
+        sync_timestamp
+      FROM buildings
+      ORDER BY name, id
     `);
     
     // Get energy stats for all buildings if requested
@@ -159,7 +151,15 @@ export async function GET(request: NextRequest) {
       `);
       
       const statsMap = energyStats.reduce((acc: any, stat: any) => {
-        acc[stat.building_id] = stat;
+        acc[stat.building_id] = {
+          ...stat,
+          avg_consumption: Number(stat.avg_consumption) || 0,
+          total_consumption: Number(stat.total_consumption) || 0,
+          avg_cost: Number(stat.avg_cost) || 0,
+          total_cost: Number(stat.total_cost) || 0,
+          avg_efficiency: Number(stat.avg_efficiency) || 0,
+          record_count: Number(stat.record_count) || 0
+        };
         return acc;
       }, {});
       

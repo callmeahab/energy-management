@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runQuery, runQuerySingle, initializeDatabase } from '@/lib/database';
+import { getTimeRangeConfig, getTimeRangeDuration, formatChartLabel } from '@/lib/time-range-utils';
+import { TimeRange } from '@/types/energy';
 
 export async function GET(request: NextRequest) {
   try {
@@ -7,45 +9,44 @@ export async function GET(request: NextRequest) {
     
     const { searchParams } = new URL(request.url);
     const buildingId = searchParams.get('buildingId');
-    const timeRange = searchParams.get('timeRange') || '24h';
+    const timeRangeParam = searchParams.get('timeRange') || '24h';
     const aggregation = searchParams.get('aggregation') || 'hourly';
     
-    // Calculate time range
-    const now = new Date();
-    let startTime: Date;
+    // Map API time range to our TimeRange type
+    const timeRangeMap: Record<string, TimeRange> = {
+      '1h': 'hour',
+      '24h': 'day',
+      '7d': 'week',
+      '30d': 'month'
+    };
     
-    switch (timeRange) {
-      case '1h':
-        startTime = new Date(now.getTime() - 60 * 60 * 1000);
-        break;
-      case '24h':
-        startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case '7d':
-        startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case '30d':
-        startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      default:
-        startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    }
+    const timeRange: TimeRange = timeRangeMap[timeRangeParam] || 'day';
+    
+    // Calculate time range using utility
+    const now = new Date();
+    const duration = getTimeRangeDuration(timeRange);
+    const startTime = new Date(now.getTime() - duration);
+    
+    // Get time range configuration
+    const config = getTimeRangeConfig(timeRange);
     
     let sql = '';
-    const params: string[] = [startTime.toISOString()];
+    const startTimeStr = startTime.toISOString();
     
-    // Base query conditions
-    let whereClause = 'WHERE e.timestamp >= ?';
+    // Base query conditions using direct values to avoid parameter binding issues
+    let whereClause = `WHERE e.timestamp >= '${startTimeStr}'`;
     if (buildingId) {
-      whereClause += ' AND e.building_id = ?';
-      params.push(buildingId);
+      const escapedBuildingId = buildingId.replace(/'/g, "''");
+      whereClause += ` AND e.building_id = '${escapedBuildingId}'`;
     }
     
-    // Aggregation queries using DuckDB date functions
-    if (aggregation === 'hourly') {
+    // Use the modular time range configuration for SQL
+    const usedAggregation = aggregation === 'hourly' || aggregation === 'daily' ? config.aggregation : aggregation;
+    
+    if (usedAggregation === 'minute' || usedAggregation === 'hourly' || usedAggregation === 'daily' || usedAggregation === 'weekly') {
       sql = `
         SELECT 
-          date_trunc('hour', e.timestamp) as period,
+          strftime(date_trunc('${config.sqlTrunc}', e.timestamp), '${config.sqlFormat}') as period,
           AVG(e.consumption_kwh)::DOUBLE as avg_consumption,
           SUM(e.consumption_kwh)::DOUBLE as total_consumption,
           AVG(e.cost_usd)::DOUBLE as avg_cost,
@@ -56,26 +57,8 @@ export async function GET(request: NextRequest) {
           COUNT(*)::INTEGER as record_count
         FROM energy_usage e
         ${whereClause}
-        GROUP BY date_trunc('hour', e.timestamp)
-        ORDER BY period DESC
-        LIMIT 100
-      `;
-    } else if (aggregation === 'daily') {
-      sql = `
-        SELECT 
-          date_trunc('day', e.timestamp) as period,
-          AVG(e.consumption_kwh)::DOUBLE as avg_consumption,
-          SUM(e.consumption_kwh)::DOUBLE as total_consumption,
-          AVG(e.cost_usd)::DOUBLE as avg_cost,
-          SUM(e.cost_usd)::DOUBLE as total_cost,
-          AVG(e.efficiency_score)::DOUBLE as avg_efficiency,
-          AVG(e.temperature_celsius)::DOUBLE as avg_temperature,
-          AVG(e.occupancy_count)::DOUBLE as avg_occupancy,
-          COUNT(*)::INTEGER as record_count
-        FROM energy_usage e
-        ${whereClause}
-        GROUP BY date_trunc('day', e.timestamp)
-        ORDER BY period DESC
+        GROUP BY date_trunc('${config.sqlTrunc}', e.timestamp)
+        ORDER BY period ASC
         LIMIT 100
       `;
     } else {
@@ -96,7 +79,13 @@ export async function GET(request: NextRequest) {
       `;
     }
     
-    const energyData = await runQuery(sql, params);
+    const rawEnergyData = await runQuery(sql, []);
+    
+    // Add formatted labels to the energy data
+    const energyData = rawEnergyData.map((item: any, index: number) => ({
+      ...item,
+      label: formatChartLabel(item.period || item.timestamp, timeRange, index)
+    }));
     
     // Get summary statistics
     const summarySQL = `
@@ -107,13 +96,13 @@ export async function GET(request: NextRequest) {
         AVG(cost_usd)::DOUBLE as avg_cost,
         SUM(cost_usd)::DOUBLE as total_cost,
         AVG(efficiency_score)::DOUBLE as avg_efficiency,
-        MIN(timestamp) as earliest_record,
-        MAX(timestamp) as latest_record
+        strftime(MIN(timestamp), '%Y-%m-%d %H:%M:%S') as earliest_record,
+        strftime(MAX(timestamp), '%Y-%m-%d %H:%M:%S') as latest_record
       FROM energy_usage e
       ${whereClause}
     `;
     
-    const summary = await runQuerySingle(summarySQL, params);
+    const summary = await runQuerySingle(summarySQL, []);
     
     // Convert any BigInt values to regular numbers to avoid JSON serialization issues
     const sanitizeData = (obj: any): any => {
@@ -138,9 +127,16 @@ export async function GET(request: NextRequest) {
         filters: {
           buildingId,
           timeRange,
-          aggregation,
+          timeRangeParam,
+          aggregation: usedAggregation,
           startTime: startTime.toISOString(),
           endTime: now.toISOString()
+        },
+        config: {
+          timeRange,
+          sqlTrunc: config.sqlTrunc,
+          sqlFormat: config.sqlFormat,
+          aggregation: config.aggregation
         }
       }
     });

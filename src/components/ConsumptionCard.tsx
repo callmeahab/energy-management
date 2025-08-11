@@ -1,222 +1,450 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, Typography, Box, Chip } from '@mui/material';
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Legend } from 'recharts';
-import { useQuery } from '@apollo/client';
-import { GET_ENERGY_CONSUMPTION, GET_BUILDINGS, GET_SITES } from '@/lib/queries';
-import { TimeRange, Building, Site } from '@/types/energy';
-import { fetchLocalEnergyData, transformEnergyDataForCharts } from '@/lib/queries-local';
+import React, { useMemo, useState } from "react";
+import Image from "next/image";
+import { Card, CardContent, Typography, Box, Skeleton } from "@mui/material";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from "recharts";
+import NorthIcon from "@mui/icons-material/North";
+import SouthIcon from "@mui/icons-material/South";
 
-interface ConsumptionCardProps {
-  timeRange: TimeRange;
-}
+import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
 
-const mockData = [
-  { day: 'Mon', energyCost: 30, renewableEnergyCost: 25 },
-  { day: 'Tue', energyCost: 35, renewableEnergyCost: 28 },
-  { day: 'Wed', energyCost: 45, renewableEnergyCost: 32 },
-  { day: 'Thu', energyCost: 40, renewableEnergyCost: 35 },
-  { day: 'Fri', energyCost: 50, renewableEnergyCost: 42 },
-  { day: 'Sat', energyCost: 55, renewableEnergyCost: 45 },
-  { day: 'Sun', energyCost: 48, renewableEnergyCost: 40 },
-];
+const ConsumptionCard = () => {
+  const { energyData, energySummary, energyLoading } = useEnergyData();
+  const { buildings } = useBuildingData();
+  const [viewMode, setViewMode] = useState<"kwh" | "cost">("cost");
 
-const ConsumptionCard = ({ timeRange }: ConsumptionCardProps) => {
-  const [localData, setLocalData] = useState<{ data: any[]; summary: any } | null>(null);
-  const [chartData, setChartData] = useState(mockData);
-  const [dataSource, setDataSource] = useState('demo');
-  const [currentCost, setCurrentCost] = useState(8028);
-  const [currentConsumption, setCurrentConsumption] = useState(408);
-  const [costChange, setCostChange] = useState(3.8);
-  const [consumptionChange, setConsumptionChange] = useState(1.8);
-
-  // Fallback to GraphQL API if local data not available
-  const { data, loading, error } = useQuery(GET_ENERGY_CONSUMPTION, {
-    variables: { timeRange },
-    errorPolicy: 'ignore'
-  });
-
-  const { data: buildingsData, loading: buildingsLoading, error: buildingsError } = useQuery(GET_BUILDINGS, {
-    errorPolicy: 'ignore'
-  });
-
-  const { data: sitesData, loading: sitesLoading, error: sitesError } = useQuery(GET_SITES, {
-    errorPolicy: 'ignore'
-  });
-
-  // Load local energy data
-  useEffect(() => {
-    const loadLocalData = async () => {
-      try {
-        const timeRangeMap = {
-          'hour': '1h' as const,
-          'day': '24h' as const, 
-          'week': '7d' as const,
-          'month': '30d' as const
-        };
-        
-        const result = await fetchLocalEnergyData(timeRangeMap[timeRange] || '24h', undefined, 'hourly');
-        
-        if (result && result.data.length > 0) {
-          setLocalData(result);
-          
-          // Transform data for charts
-          const transformed = transformEnergyDataForCharts(result.data);
-          if (transformed.length > 0) {
-            setChartData(transformed);
-          }
-          
-          // Set consumption metrics from summary
-          if (result.summary) {
-            setCurrentCost(Math.round(result.summary.total_cost || result.summary.avg_cost * 24 || 8028));
-            setCurrentConsumption(Math.round(result.summary.total_consumption || result.summary.avg_consumption * 24 || 408));
-            setCostChange(Math.round((Math.random() * 8 - 2) * 10) / 10);
-            setConsumptionChange(Math.round((Math.random() * 6 - 1) * 10) / 10);
-          }
-          
-          setDataSource('local');
-          console.log(`Using local energy data: ${result.data.length} records`);
-          return;
-        }
-      } catch (error) {
-        console.error('Error loading local energy data:', error);
-      }
-      
-      // Fall back to API data if local data not available
-      console.log('Local energy data not available, using API fallback');
-    };
-    
-    loadLocalData();
-  }, [timeRange]);
-
-  // Fallback to API calculation if no local data
-  useEffect(() => {
-    if (dataSource !== 'local') {
-      const calculateConsumptionFromBuildings = (buildings: Building[]) => {
-        if (!buildings || buildings.length === 0) return null;
-        
-        const totalFloors = buildings.reduce((sum, building) => sum + (building.floors?.length || 0), 0);
-        const totalSpaces = buildings.reduce((sum, building) => 
-          sum + (building.floors?.reduce((floorSum, floor) => floorSum + (floor.spaces?.length || 0), 0) || 0), 0
-        );
-        
-        const baseCost = Math.max(5000, totalSpaces * 150 + totalFloors * 200);
-        const baseConsumption = Math.max(300, totalSpaces * 8 + totalFloors * 15);
-        
-        return {
-          cost: Math.floor(baseCost * (1 + Math.random() * 0.3)),
-          consumption: Math.floor(baseConsumption * (1 + Math.random() * 0.2)),
-          costChange: Math.round((Math.random() * 8 - 2) * 10) / 10,
-          consumptionChange: Math.round((Math.random() * 6 - 1) * 10) / 10
-        };
-      };
-
-      if (buildingsData?.buildings && Array.isArray(buildingsData.buildings) && buildingsData.buildings.length > 0) {
-        const calculated = calculateConsumptionFromBuildings(buildingsData.buildings);
-        if (calculated) {
-          setCurrentCost(calculated.cost);
-          setCurrentConsumption(calculated.consumption);
-          setCostChange(calculated.costChange);
-          setConsumptionChange(calculated.consumptionChange);
-          setDataSource('api-buildings');
-        }
-      } else if (sitesData?.sites && Array.isArray(sitesData.sites)) {
-        const allBuildings = sitesData.sites.flatMap((site: Site) => site.buildings || []);
-        if (allBuildings.length > 0) {
-          const calculated = calculateConsumptionFromBuildings(allBuildings);
-          if (calculated) {
-            setCurrentCost(calculated.cost);
-            setCurrentConsumption(calculated.consumption);
-            setCostChange(calculated.costChange);
-            setConsumptionChange(calculated.consumptionChange);
-            setDataSource('api-sites');
-          }
-        }
-      }
+  const chartData = useMemo(() => {
+    if (energyData.length === 0) {
+      return [];
     }
-  }, [buildingsData, sitesData, dataSource]);
+
+    return energyData.map((item: any) => {
+      return {
+        day:
+          item.label ||
+          item.period ||
+          new Date(item.period || item.timestamp).toLocaleDateString(),
+        energyCost: item.total_cost || item.avg_cost || 0,
+        renewableEnergyCost: (item.total_cost || item.avg_cost || 0) * 0.7,
+        energyConsumption: item.total_consumption || item.avg_consumption || 0,
+        renewableEnergyConsumption:
+          (item.total_consumption || item.avg_consumption || 0) * 0.8,
+      };
+    });
+  }, [energyData]);
+
+  const metrics = useMemo(() => {
+    if (energySummary && energySummary.total_records > 0) {
+      return {
+        currentCost: Math.round(
+          energySummary.total_cost || energySummary.avg_cost * 24 || 0
+        ),
+        currentConsumption: Math.round(
+          energySummary.total_consumption ||
+            energySummary.avg_consumption * 24 ||
+            0
+        ),
+        costChange: Math.round((Math.random() * 8 - 2) * 10) / 10,
+        consumptionChange: Math.round((Math.random() * 6 - 1) * 10) / 10,
+        dataSource: "mapped-api",
+        sensorCount: energySummary.total_records,
+        lastUpdate: energySummary.latest_record,
+      };
+    }
+
+    return null;
+  }, [energySummary]);
+
+  if (!metrics && !energyLoading) {
+    return (
+      <Card sx={{ height: "100%", py: 2, px: 3 }}>
+        <CardContent>
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "100%",
+              minHeight: 300,
+              textAlign: "center",
+            }}
+          >
+            <Typography variant="h6" color="text.secondary" gutterBottom>
+              No Energy Data Available
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Waiting for real-time data from Mapped.com sensors...
+            </Typography>
+          </Box>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card sx={{ height: '100%' }}>
+    <Card sx={{ height: "100%", py: 2, px: 3 }}>
       <CardContent>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h6" gutterBottom>
-            <Box component="span" sx={{ mr: 1 }}>⚡</Box>
-            Consumption
-          </Typography>
-          <Chip 
-            label={
-              dataSource === 'local' ? `Local Database` :
-              dataSource === 'api-buildings' ? `Live API (Buildings)` :
-              dataSource === 'api-sites' ? `Live API (Sites)` :
-              "Demo Data"
-            } 
-            size="small" 
-            color={
-              dataSource === 'local' ? "primary" :
-              dataSource.startsWith('api-') ? "success" : "default"
-            }
-            variant="outlined"
-          />
-        </Box>
-        
-        <Box sx={{ display: 'flex', gap: 4, mb: 3 }}>
-          <Box>
-            <Typography variant="h4" color="primary">
-              ${currentCost.toLocaleString()}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Energy Cost
-            </Typography>
-            <Chip 
-              label={`↑${costChange}%`} 
-              size="small" 
-              color="error" 
-              sx={{ mt: 0.5 }}
-            />
-          </Box>
-          <Box>
-            <Typography variant="h4" color="success.main">
-              {currentConsumption}kWh
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Energy Consumption
-            </Typography>
-            <Chip 
-              label={`↑${consumptionChange}%`} 
-              size="small" 
-              color="success" 
-              sx={{ mt: 0.5 }}
-            />
-          </Box>
-        </Box>
+        {energyLoading ? (
+          <>
+            <Skeleton variant="text" width="60%" height={40} />
+            <Box sx={{ display: "flex", gap: 4, mb: 3, mt: 2 }}>
+              <Box>
+                <Skeleton variant="text" width={120} height={40} />
+                <Skeleton variant="text" width={80} height={20} />
+                <Skeleton
+                  variant="rounded"
+                  width={60}
+                  height={24}
+                  sx={{ mt: 0.5 }}
+                />
+              </Box>
+              <Box>
+                <Skeleton variant="text" width={120} height={40} />
+                <Skeleton variant="text" width={120} height={20} />
+                <Skeleton
+                  variant="rounded"
+                  width={60}
+                  height={24}
+                  sx={{ mt: 0.5 }}
+                />
+              </Box>
+            </Box>
+            <Skeleton variant="rectangular" width="100%" height={200} />
+          </>
+        ) : (
+          <>
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                mb: 2,
+              }}
+            >
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  verticalAlign: "center",
+                  height: "100%",
+                  gap: 1,
+                }}
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    mx: "auto",
+                  }}
+                >
+                  <Image
+                    src="/consumption.svg"
+                    alt="Consumption"
+                    width={32}
+                    height={32}
+                  />
+                </Box>
+                <Box>
+                  <Box
+                    sx={{
+                      verticalAlign: "center",
+                      height: "100%",
+                      mx: "auto",
+                      fontWeight: 600,
+                      fontSize: "1.15rem",
+                      letterSpacing: "-0.01em",
+                    }}
+                  >
+                    Energy Consumption
+                  </Box>
+                  {metrics?.dataSource === "mapped-api" && (
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        fontSize: "0.75rem",
+                        color: "success.main",
+                        mt: -0.5,
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          bgcolor: "success.main",
+                          animation: "pulse 2s infinite",
+                          "@keyframes pulse": {
+                            "0%": { opacity: 1 },
+                            "50%": { opacity: 0.5 },
+                            "100%": { opacity: 1 },
+                          },
+                        }}
+                      />
+                      Live • {metrics?.sensorCount} sensors
+                    </Box>
+                  )}
+                </Box>
+              </Box>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color:
+                      viewMode === "kwh" ? "primary.main" : "text.secondary",
+                    fontWeight: viewMode === "kwh" ? 600 : 400,
+                    borderBottom: viewMode === "kwh" ? 2 : 0,
+                    borderColor: "primary.main",
+                    pb: 0.5,
+                    cursor: "pointer",
+                    mr: 1,
+                  }}
+                  onClick={() => setViewMode("kwh")}
+                >
+                  kWh
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color:
+                      viewMode === "cost" ? "primary.main" : "text.secondary",
+                    fontWeight: viewMode === "cost" ? 600 : 400,
+                    borderBottom: viewMode === "cost" ? 2 : 0,
+                    borderColor: "primary.main",
+                    pb: 0.5,
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setViewMode("cost")}
+                >
+                  Cost
+                </Typography>
+              </Box>
+            </Box>
 
-        <Box sx={{ height: 200, mt: 2 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <XAxis dataKey="day" axisLine={false} tickLine={false} />
-              <YAxis hide />
-              <Legend />
-              <Line 
-                type="monotone" 
-                dataKey="energyCost" 
-                stroke="#ff9800" 
-                strokeWidth={2} 
-                name="Energy cost"
-                dot={{ r: 4 }}
-              />
-              <Line 
-                type="monotone" 
-                dataKey="renewableEnergyCost" 
-                stroke="#4caf50" 
-                strokeWidth={2} 
-                name="Renewable energy cost"
-                dot={{ r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </Box>
+            <Box
+              sx={{
+                display: "flex",
+                gap: 4,
+                mb: 3,
+                fontWeight: 600,
+                justifyContent: "center",
+                backgroundColor: "#F9F9F9",
+                padding: 2,
+              }}
+            >
+              <Box sx={{ textAlign: "center" }}>
+                <Typography
+                  variant="body2"
+                  sx={{ fontWeight: 600, color: "#5A6C83" }}
+                >
+                  Energy Cost
+                </Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Box sx={{ fontSize: "1.5rem" }}>
+                    ${metrics?.currentCost?.toLocaleString() || 0}
+                  </Box>
+                  <Box
+                    color="error"
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      color: "error.main",
+                    }}
+                  >
+                    <NorthIcon fontSize="small" />
+                    <Box sx={{ fontSize: "0.9rem" }}>{metrics?.costChange || 0}%</Box>
+                  </Box>
+                </Box>
+              </Box>
+              <Box>
+                <Typography
+                  variant="body2"
+                  sx={{ fontWeight: 600, color: "#5A6C83" }}
+                >
+                  Energy Consumption
+                </Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Box sx={{ fontSize: "1.5rem" }}>
+                    {metrics?.currentConsumption || 0}kWh
+                  </Box>
+                  <Box
+                    color="success.main"
+                    sx={{ display: "flex", alignItems: "center" }}
+                  >
+                    <SouthIcon fontSize="small" />
+                    <Box sx={{ fontSize: "0.9rem" }}>
+                      {metrics?.consumptionChange || 0}%
+                    </Box>
+                  </Box>
+                </Box>
+              </Box>
+            </Box>
+
+            <Box sx={{ mb: 2 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  mx: "auto",
+                  justifyContent: "center",
+                  gap: 3,
+                  mb: 2,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 16,
+                      height: 16,
+                      bgcolor: "#ff9800",
+                    }}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    {viewMode === "cost" ? "Energy cost" : "Energy consumption"}
+                  </Typography>
+                </Box>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 16,
+                      height: 16,
+                      bgcolor: "#4caf50",
+                    }}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    {viewMode === "cost"
+                      ? "Renewable energy cost"
+                      : "Renewable energy consumption"}
+                  </Typography>
+                </Box>
+              </Box>
+            </Box>
+
+            {metrics?.dataSource === "mapped-api" && metrics?.lastUpdate && (
+              <Box
+                sx={{
+                  textAlign: "center",
+                  fontSize: "0.75rem",
+                  color: "text.secondary",
+                  mb: 1,
+                }}
+              >
+                Last updated: {new Date(metrics?.lastUpdate || '').toLocaleString()}
+              </Box>
+            )}
+
+            <Box sx={{ height: 200, mt: 2 }}>
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={chartData}
+                    margin={{ top: 10, right: 30, bottom: 10, left: 20 }}
+                  >
+                    <XAxis
+                      dataKey="day"
+                      axisLine={true}
+                      tickLine={true}
+                      tickMargin={8}
+                      tick={{ fontSize: 12, fill: "#666" }}
+                    />
+                    <YAxis
+                      axisLine={true}
+                      tickLine={true}
+                      tickFormatter={(v) => {
+                        if (viewMode === "cost") {
+                          if (v >= 1000000) {
+                            return `$${(v / 1000000).toFixed(0)}M`;
+                          } else if (v >= 1000) {
+                            return `$${(v / 1000).toFixed(0)}K`;
+                          } else {
+                            return `$${v}`;
+                          }
+                        } else {
+                          return `${v}kWh`;
+                        }
+                      }}
+                      tickMargin={8}
+                      tick={{ fontSize: 12, fill: "#666" }}
+                    />
+                    {viewMode === "cost" ? (
+                      <>
+                        <Line
+                          type="linear"
+                          dataKey="energyCost"
+                          stroke="#ff9800"
+                          strokeWidth={3}
+                          name="Energy cost"
+                          dot={{ r: 5, fill: "#ff9800", strokeWidth: 0 }}
+                          activeDot={{ r: 6 }}
+                        />
+                        <Line
+                          type="linear"
+                          dataKey="renewableEnergyCost"
+                          stroke="#4caf50"
+                          strokeWidth={3}
+                          name="Renewable energy cost"
+                          dot={{ r: 5, fill: "#4caf50", strokeWidth: 0 }}
+                          activeDot={{ r: 6 }}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <Line
+                          type="linear"
+                          dataKey="energyConsumption"
+                          stroke="#ff9800"
+                          strokeWidth={3}
+                          name="Energy consumption"
+                          dot={{ r: 5, fill: "#ff9800", strokeWidth: 0 }}
+                          activeDot={{ r: 6 }}
+                        />
+                        <Line
+                          type="linear"
+                          dataKey="renewableEnergyConsumption"
+                          stroke="#4caf50"
+                          strokeWidth={3}
+                          name="Renewable energy consumption"
+                          dot={{ r: 5, fill: "#4caf50", strokeWidth: 0 }}
+                          activeDot={{ r: 6 }}
+                        />
+                      </>
+                    )}
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    height: "100%",
+                    color: "text.secondary",
+                  }}
+                >
+                  <Typography variant="body2">
+                    No chart data available
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -3,6 +3,111 @@ import { setContext } from '@apollo/client/link/context';
 import { runCommand, runQuery, runQuerySingle, initializeDatabase } from './database';
 import { Building, Site, Floor, Space } from '../types/energy';
 
+// GraphQL queries for energy/sensor data synchronization
+const GET_ENERGY_POINTS = gql`
+  query GetEnergyPoints($buildingIds: [String!]) {
+    buildings(filter: { id: { in: $buildingIds } }) {
+      id
+      name
+      points {
+        id
+        name
+        description
+        exactType
+        unit {
+          name
+        }
+        series(latest: true) {
+          timestamp
+          value {
+            float64Value
+            float32Value
+            stringValue
+            boolValue
+          }
+        }
+      }
+      floors {
+        id
+        name
+        points {
+          id
+          name
+          description
+          exactType
+          unit {
+            name
+            symbol
+          }
+          series(latest: true) {
+            timestamp
+            value {
+              doubleValue
+              stringValue
+              boolValue
+            }
+          }
+        }
+        spaces {
+          id
+          name
+          points {
+            id
+            name
+            description
+            exactType
+            unit {
+              name
+              symbol
+            }
+            series(latest: true) {
+              timestamp
+              value {
+                doubleValue
+                stringValue
+                boolValue
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const GET_HISTORICAL_ENERGY_DATA = gql`
+  query GetHistoricalEnergyData($pointIds: [String!], $startTime: DateTime, $endTime: DateTime) {
+    points(filter: { id: { in: $pointIds } }) {
+      id
+      name
+      exactType
+      unit {
+        name
+      }
+      series(startTime: $startTime, endTime: $endTime) {
+        timestamp
+        value {
+          float64Value
+          float32Value
+          stringValue
+          boolValue
+        }
+      }
+      aggregation(
+        startTime: $startTime
+        endTime: $endTime
+        period: HOUR
+      ) {
+        timestamp
+        avg
+        min
+        max
+        count
+      }
+    }
+  }
+`;
+
 // GraphQL queries for data synchronization
 const GET_SITES_FOR_SYNC = gql`
   query GetSitesForSync {
@@ -68,17 +173,6 @@ const GET_BUILDINGS_FOR_SYNC = gql`
       name
       description
       exactType
-      address {
-        street
-        city
-        state
-        country
-        postalCode
-      }
-      geolocation {
-        latitude
-        longitude
-      }
       dateCreated
       dateUpdated
       floors {
@@ -105,7 +199,7 @@ const createSyncClient = () => {
   const httpLink = createHttpLink({
     uri: process.env.NODE_ENV === 'production' 
       ? 'https://api.mapped.com/graphql'
-      : '/api/graphql',
+      : 'http://localhost:3000/api/graphql',
     credentials: 'omit',
   });
 
@@ -149,12 +243,57 @@ export class SyncService {
     return initializeDatabase();
   }
 
+  // Test method to debug the sync process
+  async testSync(): Promise<any> {
+    console.log('Testing sync process...');
+    
+    try {
+      console.log('1. Testing database initialization...');
+      await initializeDatabase();
+      console.log('Database initialized successfully');
+
+      console.log('2. Testing GraphQL client...');
+      const { data } = await this.client.query({
+        query: GET_BUILDINGS_FOR_SYNC,
+      });
+      console.log('GraphQL query successful, buildings found:', data?.buildings?.length || 0);
+
+      if (data?.buildings && data.buildings.length > 0) {
+        const building = data.buildings[0];
+        console.log('3. Testing building upsert for:', building.id, building.name);
+        
+        await this.upsertBuilding(building);
+        console.log('Building upsert successful');
+        
+        return {
+          success: true,
+          message: 'Test sync completed successfully',
+          buildingsSynced: 1,
+          testBuilding: building
+        };
+      } else {
+        return {
+          success: false,
+          message: 'No buildings found in GraphQL response'
+        };
+      }
+    } catch (error) {
+      console.error('Test sync failed:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        error: error
+      };
+    }
+  }
+
   // Main synchronization method
   async synchronizeData(syncType: 'full' | 'incremental' = 'incremental'): Promise<SyncResult> {
     const startTime = Date.now();
     let recordsSynced = 0;
     let errorsCount = 0;
     let errorMessage = '';
+    let errorDetails: string[] = [];
 
     try {
       await initializeDatabase();
@@ -166,28 +305,24 @@ export class SyncService {
         ? await this.getLastSyncTimestamp('data_sync')
         : null;
 
-      // First insert some test buildings manually for testing
-      await this.insertTestBuildings();
-      recordsSynced += 3; // 3 test buildings
+      // Sync buildings and spaces from Mapped service
+      const buildingResult = await this.syncBuildings(lastSync, errorDetails);
+      recordsSynced += buildingResult.recordsSynced;
+      errorsCount += buildingResult.errorsCount;
 
-      // Generate synthetic energy usage data based on buildings
-      const energyResult = await this.generateEnergyUsageData();
+      // Sync energy/sensor data from buildings
+      const energyResult = await this.syncEnergyData(errorDetails);
       recordsSynced += energyResult.recordsSynced;
       errorsCount += energyResult.errorsCount;
 
       const duration = Date.now() - startTime;
 
-      // Record sync status
-      await this.recordSyncStatus({
-        syncType: 'data_sync',
-        status: errorsCount > 0 ? 'partial_success' : 'success',
-        recordsSynced,
-        errorsCount,
-        errorMessage,
-        duration
-      });
-
       console.log(`Synchronization completed: ${recordsSynced} records synced, ${errorsCount} errors, ${duration}ms`);
+      
+      if (errorDetails.length > 0) {
+        console.log('Error details:', errorDetails);
+        errorMessage = errorDetails.join('; ');
+      }
 
       return {
         success: errorsCount === 0,
@@ -200,86 +335,100 @@ export class SyncService {
     } catch (error) {
       const duration = Date.now() - startTime;
       errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      errorsCount = 1;
-
-      // Temporarily disabled to debug parameter issues
-      // await this.recordSyncStatus({
-      //   syncType: 'data_sync',
-      //   status: 'error',
-      //   recordsSynced,
-      //   errorsCount,
-      //   errorMessage,
-      //   duration
-      // });
-
-      console.error('Synchronization failed:', error);
+      console.error('Synchronization failed with error:', error);
+      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
 
       return {
         success: false,
-        recordsSynced,
-        errorsCount,
+        recordsSynced: 0,
+        errorsCount: 1,
         errorMessage,
         duration
       };
     }
   }
 
-  // Sync buildings, floors, and spaces
-  private async syncBuildings(lastSync: Date | null): Promise<{ recordsSynced: number; errorsCount: number }> {
+  // Sync buildings, floors, and spaces  
+  private async syncBuildings(lastSync: Date | null, errorDetails: string[]): Promise<{ recordsSynced: number; errorsCount: number }> {
     let recordsSynced = 0;
     let errorsCount = 0;
 
     try {
+      console.log('Starting building sync...');
+      
       // Fetch buildings from API
       const { data } = await this.client.query({
         query: GET_BUILDINGS_FOR_SYNC,
       });
 
-      if (data?.buildings) {
+      console.log('GraphQL response received');
+      console.log('Number of buildings:', data?.buildings?.length || 0);
+
+      if (data?.buildings && data.buildings.length > 0) {
+        // Sync all buildings from the response
         for (const building of data.buildings) {
+          console.log(`Syncing building: ${building.id} - ${building.name}`);
+          
           try {
             // Insert/update building
             await this.upsertBuilding(building);
             recordsSynced++;
+            console.log(`Successfully synced building ${building.id}`);
 
-            // Sync floors for this building
-            if (building.floors) {
+            // Sync floors and spaces
+            if (building.floors && building.floors.length > 0) {
               for (const floor of building.floors) {
                 try {
                   await this.upsertFloor(floor, building.id);
                   recordsSynced++;
+                  console.log(`Successfully synced floor ${floor.id}`);
 
-                  // Sync spaces for this floor
-                  if (floor.spaces) {
+                  if (floor.spaces && floor.spaces.length > 0) {
                     for (const space of floor.spaces) {
                       try {
                         await this.upsertSpace(space, floor.id, building.id);
                         recordsSynced++;
+                        console.log(`Successfully synced space ${space.id}`);
                       } catch (error) {
-                        console.error(`Error syncing space ${space.id}:`, error);
+                        const errorMsg = `Error syncing space ${space.id}: ${error instanceof Error ? error.message : error}`;
+                        console.error(errorMsg);
+                        errorDetails.push(errorMsg);
                         errorsCount++;
                       }
                     }
                   }
                 } catch (error) {
-                  console.error(`Error syncing floor ${floor.id}:`, error);
+                  const errorMsg = `Error syncing floor ${floor.id}: ${error instanceof Error ? error.message : error}`;
+                  console.error(errorMsg);
+                  errorDetails.push(errorMsg);
                   errorsCount++;
                 }
               }
             }
 
             // Update building counts
-            await this.updateBuildingCounts(building.id);
+            try {
+              await this.updateBuildingCounts(building.id);
+              console.log(`Successfully updated building counts for ${building.id}`);
+            } catch (countError) {
+              console.error(`Error updating building counts for ${building.id}:`, countError);
+              // Don't throw here, just log the error since the main building sync succeeded
+            }
 
           } catch (error) {
-            console.error(`Error syncing building ${building.id}:`, error);
+            const errorMsg = `Error syncing building ${building.id}: ${error instanceof Error ? error.message : error}`;
+            console.error(errorMsg);
+            errorDetails.push(errorMsg);
             errorsCount++;
           }
         }
+      } else {
+        console.log('No buildings found in GraphQL response');
       }
 
       // Try to fetch from sites as fallback
       if (!data?.buildings || data.buildings.length === 0) {
+        console.log('Trying sites fallback...');
         const sitesResult = await this.syncFromSites();
         recordsSynced += sitesResult.recordsSynced;
         errorsCount += sitesResult.errorsCount;
@@ -287,9 +436,11 @@ export class SyncService {
 
     } catch (error) {
       console.error('Error fetching buildings from API:', error);
+      console.error('Building sync error stack:', error instanceof Error ? error.stack : 'No stack trace');
       errorsCount++;
     }
 
+    console.log(`Building sync completed: ${recordsSynced} records synced, ${errorsCount} errors`);
     return { recordsSynced, errorsCount };
   }
 
@@ -342,179 +493,366 @@ export class SyncService {
     return { recordsSynced, errorsCount };
   }
 
-  // Test method to insert sample buildings
-  private async insertTestBuildings(): Promise<void> {
-    const testBuildings = [
-      {
-        id: 'test-building-1',
-        name: 'Test Office Building',
-        description: 'A test office building for development',
-        exactType: 'office',
-        address: { street: '123 Test St', city: 'Test City', state: 'TC', country: 'US', postalCode: '12345' },
-        geolocation: { latitude: 37.7749, longitude: -122.4194 },
-        dateCreated: new Date().toISOString(),
-        dateUpdated: new Date().toISOString()
-      },
-      {
-        id: 'test-building-2', 
-        name: 'Test Retail Store',
-        description: 'A test retail store for development',
-        exactType: 'retail',
-        address: { street: '456 Test Ave', city: 'Test City', state: 'TC', country: 'US', postalCode: '12346' },
-        geolocation: { latitude: 37.7849, longitude: -122.4094 },
-        dateCreated: new Date().toISOString(),
-        dateUpdated: new Date().toISOString()
-      },
-      {
-        id: 'test-building-3',
-        name: 'Test Warehouse',
-        description: 'A test warehouse for development', 
-        exactType: 'warehouse',
-        address: { street: '789 Test Blvd', city: 'Test City', state: 'TC', country: 'US', postalCode: '12347' },
-        geolocation: { latitude: 37.7949, longitude: -122.3994 },
-        dateCreated: new Date().toISOString(),
-        dateUpdated: new Date().toISOString()
-      }
-    ];
+  // Sync energy/sensor data from Mapped service
+  private async syncEnergyData(errorDetails: string[]): Promise<{ recordsSynced: number; errorsCount: number }> {
+    let recordsSynced = 0;
+    let errorsCount = 0;
 
-    for (const building of testBuildings) {
-      await this.upsertBuilding(building);
+    try {
+      console.log('Starting energy data sync...');
+      
+      // Get all buildings from local database to sync their energy data
+      const buildings = await runQuery(`SELECT id FROM buildings`);
+      
+      if (buildings.length === 0) {
+        console.log('No buildings found for energy data sync');
+        return { recordsSynced, errorsCount };
+      }
+
+      const buildingIds = buildings.map(b => b.id);
+      console.log(`Syncing energy data for ${buildingIds.length} buildings:`, buildingIds);
+
+      // Fetch current energy point data from Mapped API (only Electric_Power_Sensor)
+      const GET_POWER_SENSORS_ONLY = gql`
+        query GetPowerSensors($buildingIds: [String!]) {
+          buildings(filter: { id: { in: $buildingIds } }) {
+            id
+            name
+            points(filter: { exactType: { in: ["Electric_Power_Sensor"] } }) {
+              id
+              name
+              description
+              exactType
+              unit {
+                name
+              }
+              series(latest: true) {
+                timestamp
+                value {
+                  float64Value
+                  float32Value
+                  stringValue
+                  boolValue
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const { data } = await this.client.query({
+        query: GET_POWER_SENSORS_ONLY,
+        variables: { buildingIds }
+      });
+
+      console.log('Energy points GraphQL response received');
+
+      if (data?.buildings) {
+        for (const building of data.buildings) {
+          // Sync building-level points
+          if (building.points && building.points.length > 0) {
+            for (const point of building.points) {
+              try {
+                const energyRecordsCount = await this.upsertEnergyData(point, building.id, null, null);
+                recordsSynced += energyRecordsCount;
+              } catch (error) {
+                const errorMsg = `Error syncing building point ${point.id}: ${error instanceof Error ? error.message : error}`;
+                console.error(errorMsg);
+                errorDetails.push(errorMsg);
+                errorsCount++;
+              }
+            }
+          }
+
+          // Sync floor-level points
+          if (building.floors) {
+            for (const floor of building.floors) {
+              if (floor.points && floor.points.length > 0) {
+                for (const point of floor.points) {
+                  try {
+                    const energyRecordsCount = await this.upsertEnergyData(point, building.id, floor.id, null);
+                    recordsSynced += energyRecordsCount;
+                  } catch (error) {
+                    const errorMsg = `Error syncing floor point ${point.id}: ${error instanceof Error ? error.message : error}`;
+                    console.error(errorMsg);
+                    errorDetails.push(errorMsg);
+                    errorsCount++;
+                  }
+                }
+              }
+
+              // Sync space-level points
+              if (floor.spaces) {
+                for (const space of floor.spaces) {
+                  if (space.points && space.points.length > 0) {
+                    for (const point of space.points) {
+                      try {
+                        const energyRecordsCount = await this.upsertEnergyData(point, building.id, floor.id, space.id);
+                        recordsSynced += energyRecordsCount;
+                      } catch (error) {
+                        const errorMsg = `Error syncing space point ${point.id}: ${error instanceof Error ? error.message : error}`;
+                        console.error(errorMsg);
+                        errorDetails.push(errorMsg);
+                        errorsCount++;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      console.log(`Energy data sync completed: ${recordsSynced} records synced, ${errorsCount} errors`);
+
+    } catch (error) {
+      console.error('Error syncing energy data:', error);
+      errorsCount++;
     }
+
+    return { recordsSynced, errorsCount };
   }
+
+  // Upsert energy data from a sensor point
+  private async upsertEnergyData(
+    point: any,
+    buildingId: string,
+    floorId: string | null,
+    spaceId: string | null
+  ): Promise<number> {
+    if (!point.series || point.series.length === 0) {
+      return 0; // No data to sync
+    }
+
+    let recordsUpserted = 0;
+
+    for (const dataPoint of point.series) {
+      try {
+        const currentTime = new Date().toISOString();
+        const timestamp = dataPoint.timestamp || currentTime;
+        const value = dataPoint.value?.float64Value ?? dataPoint.value?.float32Value ?? dataPoint.value?.stringValue ?? dataPoint.value?.boolValue;
+        
+        if (value === null || value === undefined) {
+          continue; // Skip null values
+        }
+
+        // Generate unique ID for this energy reading
+        const energyId = `${point.id}_${new Date(timestamp).getTime()}`;
+        
+        // Extract numeric value for consumption/cost calculation
+        const numericValue = typeof value === 'number' ? value : 
+                           typeof value === 'string' ? parseFloat(value) || 0 : 
+                           typeof value === 'boolean' ? (value ? 1 : 0) : 0;
+
+        // Convert power data to energy consumption
+        // Most sensors provide instantaneous power in watts, convert to kWh
+        const powerWatts = numericValue;
+        const powerKW = powerWatts / 1000; // Convert watts to kilowatts
+        
+        // For hourly readings, assume this represents average power over the hour
+        // So 1 hour * average kW = kWh consumed in that hour
+        const consumption = powerKW; // kWh (assuming 1-hour interval)
+        const cost = consumption * 0.12; // Assume $0.12 per kWh
+        const efficiency = Math.min(Math.max(0.7 + Math.random() * 0.3, 0), 1); // Random efficiency 0.7-1.0
+
+        const upsertSql = `
+          INSERT INTO energy_usage (
+            id, building_id, floor_id, space_id, timestamp,
+            consumption_kwh, cost_usd, efficiency_score,
+            temperature_celsius, occupancy_count, usage_type,
+            source, sync_timestamp
+          ) VALUES (
+            '${energyId.replace(/'/g, "''")}',
+            '${buildingId.replace(/'/g, "''")}',
+            ${floorId ? `'${floorId.replace(/'/g, "''")}'` : 'NULL'},
+            ${spaceId ? `'${spaceId.replace(/'/g, "''")}'` : 'NULL'},
+            '${timestamp}',
+            ${consumption},
+            ${cost},
+            ${efficiency},
+            NULL, NULL,
+            '${point.exactType?.replace(/'/g, "''") || 'sensor'}',
+            'mapped_api',
+            '${currentTime}'
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            consumption_kwh = ${consumption},
+            cost_usd = ${cost},
+            efficiency_score = ${efficiency},
+            usage_type = '${point.exactType?.replace(/'/g, "''") || 'sensor'}',
+            source = 'mapped_api',
+            sync_timestamp = '${currentTime}'
+        `;
+
+        await runCommand(upsertSql);
+        recordsUpserted++;
+        console.log(`Upserted energy data: ${energyId} (${powerWatts}W -> ${consumption.toFixed(3)} kWh)`);
+
+      } catch (error) {
+        console.error(`Error upserting energy data for point ${point.id}:`, error);
+        throw error;
+      }
+    }
+
+    return recordsUpserted;
+  }
+
 
   // Database upsert methods
   private async upsertBuilding(building: Building): Promise<void> {
     console.log('Upserting building:', building.id, building.name);
-    // Simplified approach: use direct SQL values to avoid parameter binding issues
-    const name = building.name ? `'${building.name.replace(/'/g, "''")}'` : 'NULL';
-    const description = building.description ? `'${building.description.replace(/'/g, "''")}'` : 'NULL';
-    const exactType = building.exactType ? `'${building.exactType.replace(/'/g, "''")}'` : 'NULL';
-    const addressStreet = building.address?.street ? `'${building.address.street.replace(/'/g, "''")}'` : 'NULL';
-    const addressCity = building.address?.city ? `'${building.address.city.replace(/'/g, "''")}'` : 'NULL';
-    const addressState = building.address?.state ? `'${building.address.state.replace(/'/g, "''")}'` : 'NULL';
-    const addressCountry = building.address?.country ? `'${building.address.country.replace(/'/g, "''")}'` : 'NULL';
-    const addressPostalCode = building.address?.postalCode ? `'${building.address.postalCode.replace(/'/g, "''")}'` : 'NULL';
-    const latitude = building.geolocation?.latitude || 'NULL';
-    const longitude = building.geolocation?.longitude || 'NULL';
-    const dateCreated = building.dateCreated ? `'${building.dateCreated}'` : 'NULL';
-    const dateUpdated = building.dateUpdated ? `'${building.dateUpdated}'` : 'NULL';
-    const buildingId = `'${building.id.replace(/'/g, "''")}'`;
     
-    // First try to update
-    const updateSql = `
-      UPDATE buildings SET
-        name = ${name}, description = ${description}, exact_type = ${exactType},
-        address_street = ${addressStreet}, address_city = ${addressCity}, address_state = ${addressState}, 
-        address_country = ${addressCountry}, address_postal_code = ${addressPostalCode},
-        latitude = ${latitude}, longitude = ${longitude}, date_created = ${dateCreated}, 
-        date_updated = ${dateUpdated}, sync_timestamp = CURRENT_TIMESTAMP
-      WHERE id = ${buildingId}
+    // Use direct SQL values to avoid parameter binding issues
+    const escapedId = (building.id || '').replace(/'/g, "''");
+    const escapedName = (building.name || '').replace(/'/g, "''");
+    const escapedDescription = (building.description || '').replace(/'/g, "''");
+    const escapedType = (building.exactType || '').replace(/'/g, "''");
+    const escapedDateCreated = building.dateCreated || new Date().toISOString();
+    const escapedDateUpdated = building.dateUpdated || new Date().toISOString();
+    
+    // Handle address fields safely
+    const addressStreet = building.address?.street ? building.address.street.replace(/'/g, "''") : null;
+    const addressCity = building.address?.city ? building.address.city.replace(/'/g, "''") : null;
+    const addressState = building.address?.state ? building.address.state.replace(/'/g, "''") : null;
+    const addressCountry = building.address?.country ? building.address.country.replace(/'/g, "''") : null;
+    const addressPostalCode = building.address?.postalCode ? building.address.postalCode.replace(/'/g, "''") : null;
+    
+    // Handle geolocation
+    const latitude = building.geolocation?.latitude || null;
+    const longitude = building.geolocation?.longitude || null;
+    
+    // Use current time for sync_timestamp
+    const currentTime = new Date().toISOString();
+    
+    // Try insert or replace approach using DuckDB UPSERT syntax
+    const upsertSql = `
+      INSERT INTO buildings (
+        id, name, description, exact_type,
+        address_street, address_city, address_state, address_country, address_postal_code,
+        latitude, longitude, date_created, date_updated, floors_count, spaces_count, sync_timestamp
+      ) VALUES (
+        '${escapedId}', 
+        '${escapedName}', 
+        '${escapedDescription}', 
+        '${escapedType}',
+        ${addressStreet ? `'${addressStreet}'` : 'NULL'}, 
+        ${addressCity ? `'${addressCity}'` : 'NULL'}, 
+        ${addressState ? `'${addressState}'` : 'NULL'}, 
+        ${addressCountry ? `'${addressCountry}'` : 'NULL'}, 
+        ${addressPostalCode ? `'${addressPostalCode}'` : 'NULL'},
+        ${latitude !== null ? latitude : 'NULL'}, 
+        ${longitude !== null ? longitude : 'NULL'}, 
+        '${escapedDateCreated}', 
+        '${escapedDateUpdated}', 
+        0, 0, '${currentTime}'
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = '${escapedName}',
+        description = '${escapedDescription}',
+        exact_type = '${escapedType}',
+        date_created = '${escapedDateCreated}',
+        date_updated = '${escapedDateUpdated}',
+        sync_timestamp = '${currentTime}'
     `;
 
-    const updateResult = await runCommand(updateSql, []);
-    console.log('Update result:', updateResult);
-
-    // If no rows were updated, insert the new record
-    if (updateResult.changes === 0) {
-      console.log('Inserting new building:', building.id);
-      const insertSql = `
-        INSERT INTO buildings (
-          id, name, description, exact_type,
-          address_street, address_city, address_state, address_country, address_postal_code,
-          latitude, longitude, date_created, date_updated, sync_timestamp
-        ) VALUES (${buildingId}, ${name}, ${description}, ${exactType}, ${addressStreet}, ${addressCity}, ${addressState}, ${addressCountry}, ${addressPostalCode}, ${latitude}, ${longitude}, ${dateCreated}, ${dateUpdated}, CURRENT_TIMESTAMP)
-      `;
-
-      const insertResult = await runCommand(insertSql, []);
-      console.log('Insert result:', insertResult);
-    } else {
-      console.log('Updated existing building:', building.id);
+    try {
+      const result = await runCommand(upsertSql);
+      console.log('Upsert result for building:', building.id, result);
+    } catch (error) {
+      console.error('Error upserting building:', building.id, error);
+      throw error;
     }
   }
 
   private async upsertFloor(floor: Floor, buildingId: string): Promise<void> {
-    // First try to update
-    const updateSql = `
-      UPDATE floors SET
-        building_id = ?, name = ?, description = ?, date_created = ?, date_updated = ?, sync_timestamp = CURRENT_TIMESTAMP
-      WHERE id = ?
+    console.log('Upserting floor:', floor.id, floor.name);
+    
+    const escapedId = (floor.id || '').replace(/'/g, "''");
+    const escapedBuildingId = (buildingId || '').replace(/'/g, "''");
+    const escapedName = (floor.name || '').replace(/'/g, "''");
+    const escapedDescription = (floor.description || '').replace(/'/g, "''");
+    const escapedDateCreated = floor.dateCreated || new Date().toISOString();
+    const escapedDateUpdated = floor.dateUpdated || new Date().toISOString();
+    
+    const currentTime = new Date().toISOString();
+    
+    const upsertSql = `
+      INSERT INTO floors (
+        id, building_id, name, description, date_created, date_updated, sync_timestamp
+      ) VALUES (
+        '${escapedId}', 
+        '${escapedBuildingId}', 
+        '${escapedName}', 
+        '${escapedDescription}', 
+        '${escapedDateCreated}', 
+        '${escapedDateUpdated}', 
+        '${currentTime}'
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        building_id = '${escapedBuildingId}',
+        name = '${escapedName}',
+        description = '${escapedDescription}',
+        date_created = '${escapedDateCreated}',
+        date_updated = '${escapedDateUpdated}',
+        sync_timestamp = '${currentTime}'
     `;
     
-    const updateParams = [
-      buildingId,
-      floor.name || null,
-      floor.description || null,
-      floor.dateCreated || null,
-      floor.dateUpdated || null,
-      floor.id,
-    ];
-    
-    const updateResult = await runCommand(updateSql, updateParams);
-    
-    // If no rows were updated, insert the new record
-    if (updateResult.changes === 0) {
-      const insertSql = `
-        INSERT INTO floors (
-          id, building_id, name, description, date_created, date_updated, sync_timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `;
-      
-      const insertParams = [
-        floor.id,
-        buildingId,
-        floor.name || null,
-        floor.description || null,
-        floor.dateCreated || null,
-        floor.dateUpdated || null,
-      ];
-      
-      await runCommand(insertSql, insertParams);
+    try {
+      const result = await runCommand(upsertSql);
+      console.log('Upsert result for floor:', floor.id, result);
+    } catch (error) {
+      console.error('Error upserting floor:', floor.id, error);
+      throw error;
     }
   }
 
   private async upsertSpace(space: Space, floorId: string, buildingId: string): Promise<void> {
-    // First try to update
-    const updateSql = `
-      UPDATE spaces SET
-        floor_id = ?, building_id = ?, name = ?, description = ?, exact_type = ?,
-        date_created = ?, date_updated = ?, sync_timestamp = CURRENT_TIMESTAMP
-      WHERE id = ?
+    console.log('Upserting space:', space.id, space.name);
+    
+    const escapedId = (space.id || '').replace(/'/g, "''");
+    const escapedFloorId = (floorId || '').replace(/'/g, "''");
+    const escapedBuildingId = (buildingId || '').replace(/'/g, "''");
+    const escapedName = (space.name || '').replace(/'/g, "''");
+    const escapedDescription = (space.description || '').replace(/'/g, "''");
+    const escapedType = (space.exactType || '').replace(/'/g, "''");
+    const escapedDateCreated = space.dateCreated || new Date().toISOString();
+    const escapedDateUpdated = space.dateUpdated || new Date().toISOString();
+    
+    const currentTime = new Date().toISOString();
+    
+    const upsertSql = `
+      INSERT INTO spaces (
+        id, floor_id, building_id, name, description, exact_type,
+        date_created, date_updated, sync_timestamp
+      ) VALUES (
+        '${escapedId}', 
+        '${escapedFloorId}', 
+        '${escapedBuildingId}', 
+        '${escapedName}', 
+        '${escapedDescription}', 
+        '${escapedType}',
+        '${escapedDateCreated}', 
+        '${escapedDateUpdated}', 
+        '${currentTime}'
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        floor_id = '${escapedFloorId}',
+        building_id = '${escapedBuildingId}',
+        name = '${escapedName}',
+        description = '${escapedDescription}',
+        exact_type = '${escapedType}',
+        date_created = '${escapedDateCreated}',
+        date_updated = '${escapedDateUpdated}',
+        sync_timestamp = '${currentTime}'
     `;
     
-    const updateParams = [
-      floorId,
-      buildingId,
-      space.name || null,
-      space.description || null,
-      space.exactType || null,
-      space.dateCreated || null,
-      space.dateUpdated || null,
-      space.id,
-    ];
-    
-    const updateResult = await runCommand(updateSql, updateParams);
-    
-    // If no rows were updated, insert the new record
-    if (updateResult.changes === 0) {
-      const insertSql = `
-        INSERT INTO spaces (
-          id, floor_id, building_id, name, description, exact_type,
-          date_created, date_updated, sync_timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `;
-      
-      const insertParams = [
-        space.id,
-        floorId,
-        buildingId,
-        space.name || null,
-        space.description || null,
-        space.exactType || null,
-        space.dateCreated || null,
-        space.dateUpdated || null,
-      ];
-      
-      await runCommand(insertSql, insertParams);
+    try {
+      const result = await runCommand(upsertSql);
+      console.log('Upsert result for space:', space.id, result);
+    } catch (error) {
+      console.error('Error upserting space:', space.id, error);
+      throw error;
     }
   }
 
@@ -536,103 +874,6 @@ export class SyncService {
     );
   }
 
-  // Generate synthetic energy usage data based on buildings
-  private async generateEnergyUsageData(): Promise<{ recordsSynced: number; errorsCount: number }> {
-    console.log('Starting energy data generation...');
-    let recordsSynced = 0;
-    let errorsCount = 0;
-
-    try {
-      const buildings = await runQuery<any>(`
-        SELECT b.*, 
-               COALESCE(b.floors_count, 0) as floors_count,
-               COALESCE(b.spaces_count, 0) as spaces_count
-        FROM buildings b
-      `);
-
-      console.log('Found buildings for energy generation:', buildings.length);
-
-      const now = new Date();
-      const hoursToGenerate = 24; // Generate last 24 hours of data
-
-      for (const building of buildings) {
-        console.log('Generating energy data for building:', building.id, building.name);
-        for (let hour = 0; hour < hoursToGenerate; hour++) {
-          const timestamp = new Date(now.getTime() - (hour * 60 * 60 * 1000));
-          
-          try {
-            // Generate realistic energy data based on building characteristics
-            const baseConsumption = Math.max(50, building.spaces_count * 2 + building.floors_count * 10);
-            const timeMultiplier = this.getTimeMultiplier(timestamp);
-            const randomVariation = 0.8 + Math.random() * 0.4; // 80% to 120% variation
-            
-            const consumption = baseConsumption * timeMultiplier * randomVariation;
-            const cost = consumption * (0.12 + Math.random() * 0.08); // $0.12-$0.20 per kWh
-            const efficiency = Math.max(60, Math.min(95, 85 + (Math.random() - 0.5) * 20));
-            const temperature = 20 + Math.random() * 8; // 20-28°C
-            const occupancy = Math.floor(building.spaces_count * 0.1 * timeMultiplier * (0.5 + Math.random()));
-
-            const energyId = `${building.id}-${timestamp.toISOString()}`;
-
-            // First try to update existing energy record using direct values
-            const buildingIdSafe = `'${building.id.replace(/'/g, "''")}'`;
-            const timestampSafe = `'${timestamp.toISOString()}'`;
-            const consumptionValue = Math.round(consumption * 100) / 100;
-            const costValue = Math.round(cost * 100) / 100;
-            const efficiencyValue = Math.round(efficiency * 100) / 100;
-            const temperatureValue = Math.round(temperature * 100) / 100;
-            const energyIdSafe = `'${energyId.replace(/'/g, "''")}'`;
-            
-            const updateEnergyResult = await runCommand(`
-              UPDATE energy_usage SET
-                building_id = ${buildingIdSafe}, timestamp = ${timestampSafe}, consumption_kwh = ${consumptionValue}, cost_usd = ${costValue},
-                efficiency_score = ${efficiencyValue}, temperature_celsius = ${temperatureValue}, occupancy_count = ${occupancy},
-                usage_type = 'building_total', source = 'generated', sync_timestamp = CURRENT_TIMESTAMP
-              WHERE id = ${energyIdSafe}
-            `, []);
-
-            // If no rows were updated, insert new record
-            if (updateEnergyResult.changes === 0) {
-              await runCommand(`
-                INSERT INTO energy_usage (
-                  id, building_id, timestamp, consumption_kwh, cost_usd, 
-                  efficiency_score, temperature_celsius, occupancy_count,
-                  usage_type, source, sync_timestamp
-                ) VALUES (${energyIdSafe}, ${buildingIdSafe}, ${timestampSafe}, ${consumptionValue}, ${costValue}, ${efficiencyValue}, ${temperatureValue}, ${occupancy}, 'building_total', 'generated', CURRENT_TIMESTAMP)
-              `, []);
-            }
-
-            recordsSynced++;
-          } catch (error) {
-            console.error(`Error generating energy data for building ${building.id}:`, error);
-            errorsCount++;
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error generating energy usage data:', error);
-      errorsCount++;
-    }
-
-    return { recordsSynced, errorsCount };
-  }
-
-  // Helper to get time-based multiplier for realistic energy usage patterns
-  private getTimeMultiplier(timestamp: Date): number {
-    const hour = timestamp.getHours();
-    const dayOfWeek = timestamp.getDay();
-    
-    // Weekend reduction
-    const weekendMultiplier = (dayOfWeek === 0 || dayOfWeek === 6) ? 0.6 : 1.0;
-    
-    // Hourly pattern (higher during business hours)
-    let hourMultiplier = 0.4; // Base nighttime usage
-    if (hour >= 6 && hour <= 8) hourMultiplier = 0.8; // Morning ramp-up
-    else if (hour >= 9 && hour <= 17) hourMultiplier = 1.0; // Business hours
-    else if (hour >= 18 && hour <= 22) hourMultiplier = 0.7; // Evening
-    
-    return weekendMultiplier * hourMultiplier;
-  }
 
   // Utility methods
   async getLastSyncTimestamp(syncType: string): Promise<Date | null> {
@@ -652,21 +893,28 @@ export class SyncService {
     errorMessage: string;
     duration: number;
   }): Promise<void> {
-    // Use direct values to avoid parameter binding issues
-    const syncType = (status.syncType || 'unknown').replace(/'/g, "''");
-    const statusValue = (status.status || 'unknown').replace(/'/g, "''");
-    const recordsSynced = status.recordsSynced || 0;
-    const errorsCount = status.errorsCount || 0;
-    const errorMessage = (status.errorMessage || '').replace(/'/g, "''");
-    const duration = status.duration || 0;
+    const syncId = Math.floor(Math.random() * 1000000);
+    const now = new Date().toISOString();
+    const escapedSyncType = (status.syncType || 'unknown').replace(/'/g, "''");
+    const escapedStatus = (status.status || 'unknown').replace(/'/g, "''");
+    const escapedErrorMessage = (status.errorMessage || '').replace(/'/g, "''");
     
-    const syncId = Math.floor(Math.random() * 1000000); // Use random ID within INT32 range
     await runCommand(`
       INSERT INTO sync_status (
         id, last_sync_timestamp, sync_type, status, records_synced, 
         errors_count, error_message, duration_ms, created_at
-      ) VALUES (${syncId}, CURRENT_TIMESTAMP, '${syncType}', '${statusValue}', ${recordsSynced}, ${errorsCount}, '${errorMessage}', ${duration}, CURRENT_TIMESTAMP)
-    `, []);
+      ) VALUES (
+        ${syncId}, 
+        '${now}', 
+        '${escapedSyncType}', 
+        '${escapedStatus}', 
+        ${status.recordsSynced || 0}, 
+        ${status.errorsCount || 0}, 
+        '${escapedErrorMessage}', 
+        ${status.duration || 0}, 
+        '${now}'
+      )
+    `);
   }
 
   async getSyncStatus(): Promise<any[]> {

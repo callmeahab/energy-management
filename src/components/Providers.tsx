@@ -6,6 +6,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import client from '@/lib/apollo-client';
 import theme from '@/lib/theme';
 import ErrorBoundary from './ErrorBoundary';
+import { DataProvider } from '@/contexts/DataContext';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -13,7 +14,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <ApolloProvider client={client}>
         <ThemeProvider theme={theme}>
           <CssBaseline />
-          {children}
+          <DataProvider>
+            {children}
+          </DataProvider>
         </ThemeProvider>
       </ApolloProvider>
     </ErrorBoundary>

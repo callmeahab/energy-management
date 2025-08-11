@@ -39,6 +39,7 @@ export interface Alert {
   id: string;
   type: string;
   message: string;
+  description?: string;
   severity: 'low' | 'medium' | 'high';
   timestamp: string;
   isRead: boolean;

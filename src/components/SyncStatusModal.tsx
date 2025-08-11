@@ -2,11 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Card,
-  CardContent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
   Typography,
   Box,
-  Button,
   Chip,
   LinearProgress,
   Alert,
@@ -22,9 +24,11 @@ import {
   Storage,
   ExpandMore,
   ExpandLess,
-  Refresh
+  Refresh,
+  Close
 } from '@mui/icons-material';
 import { fetchSyncStatus, triggerSync } from '@/lib/queries-local';
+import { useDataContext } from '@/contexts/DataContext';
 
 interface SyncStatusData {
   syncHistory: Array<{
@@ -51,7 +55,13 @@ interface SyncStatusData {
   } | null;
 }
 
-const SyncStatusCard = () => {
+interface SyncStatusModalProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+const SyncStatusModal: React.FC<SyncStatusModalProps> = ({ open, onClose }) => {
+  const { refreshBuildings, refreshEnergyData, currentTimeRange } = useDataContext();
   const [syncData, setSyncData] = useState<SyncStatusData | null>(null);
   const [isLoading, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,12 +83,10 @@ const SyncStatusCard = () => {
   };
 
   useEffect(() => {
-    loadSyncStatus();
-    
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(loadSyncStatus, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    if (open) {
+      loadSyncStatus();
+    }
+  }, [open]);
 
   const handleSync = async (syncType: 'full' | 'incremental') => {
     setSyncing(true);
@@ -92,6 +100,16 @@ const SyncStatusCard = () => {
         setLastSyncResult(`✅ ${result.message}`);
         // Refresh status after a short delay
         setTimeout(loadSyncStatus, 2000);
+        
+        // Trigger immediate UI refresh
+        console.log('SyncStatusModal: Refreshing UI data after manual sync...');
+        setTimeout(async () => {
+          await Promise.all([
+            refreshBuildings(),
+            refreshEnergyData(currentTimeRange)
+          ]);
+          console.log('SyncStatusModal: UI data refreshed');
+        }, 1000);
       } else {
         setLastSyncResult(`❌ ${result.message}`);
         setError(result.message);
@@ -141,23 +159,33 @@ const SyncStatusCard = () => {
   };
 
   return (
-    <Card sx={{ height: '100%' }}>
-      <CardContent>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="h6">
-            <Storage sx={{ mr: 1, verticalAlign: 'middle' }} />
+    <Dialog 
+      open={open} 
+      onClose={onClose} 
+      maxWidth="md" 
+      fullWidth
+      PaperProps={{
+        sx: { minHeight: '500px' }
+      }}
+    >
+      <DialogTitle>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Storage />
             Data Sync Status
-          </Typography>
+          </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
             <IconButton size="small" onClick={loadSyncStatus} disabled={isLoading}>
               <Refresh />
             </IconButton>
-            <IconButton size="small" onClick={() => setExpanded(!expanded)}>
-              {expanded ? <ExpandLess /> : <ExpandMore />}
+            <IconButton size="small" onClick={onClose}>
+              <Close />
             </IconButton>
           </Box>
         </Box>
+      </DialogTitle>
 
+      <DialogContent>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
@@ -181,6 +209,37 @@ const SyncStatusCard = () => {
 
         {syncData && (
           <>
+            {/* Data Source Info */}
+            <Box sx={{ mb: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Data Source
+                </Typography>
+                <Chip 
+                  label="Mapped.com API" 
+                  size="small" 
+                  color="primary"
+                  variant="outlined"
+                />
+                {syncData.databaseStats.energyRecords > 0 && (
+                  <Box
+                    sx={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      bgcolor: "success.main",
+                      animation: "pulse 2s infinite",
+                      "@keyframes pulse": {
+                        "0%": { opacity: 1 },
+                        "50%": { opacity: 0.5 },
+                        "100%": { opacity: 1 },
+                      },
+                    }}
+                  />
+                )}
+              </Box>
+            </Box>
+
             {/* Database Statistics */}
             <Box sx={{ mb: 2 }}>
               <Typography variant="body2" color="text.secondary" gutterBottom>
@@ -206,6 +265,7 @@ const SyncStatusCard = () => {
                   label={`${syncData.databaseStats.energyRecords} Energy Records`} 
                   size="small" 
                   variant="outlined" 
+                  color={syncData.databaseStats.energyRecords > 0 ? "success" : "default"}
                 />
               </Box>
             </Box>
@@ -257,12 +317,19 @@ const SyncStatusCard = () => {
               </Button>
             </Box>
 
+            {/* Sync History Toggle */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                Recent Sync History
+              </Typography>
+              <IconButton size="small" onClick={() => setExpanded(!expanded)}>
+                {expanded ? <ExpandLess /> : <ExpandMore />}
+              </IconButton>
+            </Box>
+
             {/* Sync History */}
             <Collapse in={expanded}>
               <Divider sx={{ mb: 2 }} />
-              <Typography variant="body2" color="text.secondary" gutterBottom>
-                Recent Sync History
-              </Typography>
               <Box sx={{ maxHeight: 200, overflow: 'auto' }}>
                 {syncData.syncHistory.slice(0, 5).map((sync, index) => (
                   <Box key={sync.id} sx={{ py: 1, borderBottom: index < 4 ? '1px solid' : 'none', borderColor: 'divider' }}>
@@ -290,9 +357,13 @@ const SyncStatusCard = () => {
             </Collapse>
           </>
         )}
-      </CardContent>
-    </Card>
+      </DialogContent>
+
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
   );
 };
 
-export default SyncStatusCard;
+export default SyncStatusModal;

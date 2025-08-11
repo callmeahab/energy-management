@@ -14,14 +14,13 @@ import {
 } from "@mui/material";
 import { Close, LocationOn } from "@mui/icons-material";
 import { useQuery } from "@apollo/client";
+import PopulationDensityMap from "./PopulationDensityMap";
 import { GET_BUILDINGS, GET_SITES } from "@/lib/queries";
 import { Property, Building, Site } from "@/types/energy";
 import {
   fetchLocalBuildings,
   transformBuildingToProperty,
 } from "@/lib/queries-local";
-import MapComponent from "./MapComponent";
-
 interface PropertiesMapDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -300,12 +299,10 @@ const PropertiesMapDrawer = ({
 
         <Box sx={{ flex: 1, display: "flex", flexDirection: "column" }}>
           <Box sx={{ height: "50%", position: "relative" }}>
-            <MapComponent
+            <PopulationDensityMap
               properties={properties}
               selectedProperty={selectedProperty}
               onPropertySelect={setSelectedProperty}
-              loading={isLoading}
-              error={error}
             />
           </Box>
 
