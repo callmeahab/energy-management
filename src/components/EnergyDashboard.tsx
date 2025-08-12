@@ -199,56 +199,8 @@ const EnergyDashboard = () => {
                 </Box>
               )}
 
-              {buildings.length > 0 && (
-                <Box
-                  sx={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-end",
-                    mr: 2,
-                  }}
-                >
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontSize: "0.75rem",
-                      color: "text.secondary",
-                    }}
-                  >
-                    {buildings.length} buildings connected
-                  </Typography>
-                  {schedulerStatus?.isRunning && (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                      <Box
-                        component="span"
-                        sx={{
-                          width: 4,
-                          height: 4,
-                          borderRadius: "50%",
-                          bgcolor: "success.main",
-                          animation: "pulse 2s infinite",
-                          "@keyframes pulse": {
-                            "0%": { opacity: 1 },
-                            "50%": { opacity: 0.5 },
-                            "100%": { opacity: 1 },
-                          },
-                        }}
-                      />
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontSize: "0.7rem",
-                          color: "success.main",
-                        }}
-                      >
-                        Auto-sync every hour
-                      </Typography>
-                    </Box>
-                  )}
-                </Box>
-              )}
 
-              <AlertsDropdown />
+              <AlertsDropdown schedulerStatus={schedulerStatus} />
 
               <IconButton
                 onClick={() => setSyncModalOpen(true)}
@@ -294,16 +246,40 @@ const EnergyDashboard = () => {
           </Box>
 
           <Grid container spacing={3}>
-            <Grid size={{ xs: 12, md: 6 }}>
+            <Grid size={{ 
+              xs: 12, 
+              sm: 12, 
+              md: propertiesDrawerOpen ? 12 : 12, 
+              lg: propertiesDrawerOpen ? 12 : 6, 
+              xl: propertiesDrawerOpen ? 6 : 4 
+            }}>
               <ConsumptionCard />
             </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
+            <Grid size={{ 
+              xs: 12, 
+              sm: 12, 
+              md: propertiesDrawerOpen ? 12 : 12, 
+              lg: propertiesDrawerOpen ? 12 : 6, 
+              xl: propertiesDrawerOpen ? 6 : 4 
+            }}>
               <CostSavingChart />
             </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
+            <Grid size={{ 
+              xs: 12, 
+              sm: 12, 
+              md: propertiesDrawerOpen ? 6 : 12, 
+              lg: propertiesDrawerOpen ? 6 : 3, 
+              xl: propertiesDrawerOpen ? 6 : 2 
+            }}>
               <SpaceEfficiencyCard />
             </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
+            <Grid size={{ 
+              xs: 12, 
+              sm: 12, 
+              md: propertiesDrawerOpen ? 6 : 12, 
+              lg: propertiesDrawerOpen ? 6 : 3, 
+              xl: propertiesDrawerOpen ? 6 : 2 
+            }}>
               <EnergyInefficiencyCard />
             </Grid>
           </Grid>

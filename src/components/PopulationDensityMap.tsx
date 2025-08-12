@@ -17,15 +17,13 @@ import {
   Alert,
   Chip,
   Paper,
-  Collapse,
-  IconButton,
   Switch,
   FormControlLabel,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
+  Button,
+  Popover,
+  Divider,
 } from "@mui/material";
-import { ExpandMore, ExpandLess, Layers } from "@mui/icons-material";
+import { Layers } from "@mui/icons-material";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 const MAPBOX_ACCESS_TOKEN =
@@ -87,7 +85,8 @@ const PopulationDensityMap = ({
   });
 
   // Layer management state
-  const [layersPanelOpen, setLayersPanelOpen] = useState(false);
+  const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
+  const open = Boolean(anchorEl);
   const [layers, setLayers] = useState({
     properties: {
       enabled: true,
@@ -246,189 +245,189 @@ const PopulationDensityMap = ({
     return activeLayers;
   }, [layers, selectedProperty]);
 
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
   return (
     <Box sx={{ height: "400px", position: "relative" }}>
-      {/* Unified Layer Management Panel */}
+      {/* Layer Dropdown Button */}
       <Box
         sx={{
           position: "absolute",
           top: 16,
-          left: 16,
+          right: 16,
           zIndex: 10,
-          maxWidth: 400,
         }}
       >
-        <Paper elevation={3} sx={{ p: 2 }}>
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              mb: 2,
-            }}
-          >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Layers fontSize="small" />
-              <Typography variant="h6">Map Layers</Typography>
-            </Box>
-            <IconButton
-              onClick={() => setLayersPanelOpen(!layersPanelOpen)}
-              size="small"
-            >
-              {layersPanelOpen ? <ExpandLess /> : <ExpandMore />}
-            </IconButton>
-          </Box>
-
-          <Collapse in={layersPanelOpen}>
-            <Box sx={{ mt: 2 }}>
-              {/* Population Density Layer */}
-              <Accordion>
-                <AccordionSummary expandIcon={<ExpandMore />}>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      width: "100%",
-                      pr: 2,
+        <Button
+          onClick={handleClick}
+          variant="contained"
+          startIcon={<Layers />}
+          sx={{
+            bgcolor: "white",
+            color: "text.primary",
+            boxShadow: 2,
+            "&:hover": {
+              bgcolor: "grey.100",
+            },
+          }}
+        >
+          Map Layers
+        </Button>
+        <Popover
+          open={open}
+          anchorEl={anchorEl}
+          onClose={handleClose}
+          anchorOrigin={{
+            vertical: "bottom",
+            horizontal: "right",
+          }}
+          transformOrigin={{
+            vertical: "top",
+            horizontal: "right",
+          }}
+        >
+          <Paper sx={{ p: 2, minWidth: 300 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>
+              Map Layers
+            </Typography>
+            
+            {/* Properties Layer Toggle */}
+            <Box sx={{ mb: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={layers.properties.enabled}
+                    onChange={(e) => {
+                      updateLayer("properties", {
+                        enabled: e.target.checked,
+                      });
                     }}
-                  >
-                    <Typography variant="subtitle1">
-                      Population Density
-                    </Typography>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={layers.population.enabled}
-                          onChange={(e) => {
-                            updateLayer("population", {
-                              enabled: e.target.checked,
-                            });
-                            if (
-                              e.target.checked &&
-                              layers.population.variant === "h3-3d"
-                            ) {
-                              setViewState((prev) => ({
-                                ...prev,
-                                pitch: 45,
-                              }));
-                            } else if (!e.target.checked) {
-                              setViewState((prev) => ({ ...prev, pitch: 0 }));
-                            }
-                          }}
-                          size="small"
-                        />
+                  />
+                }
+                label="Properties"
+              />
+            </Box>
+            
+            <Divider sx={{ my: 2 }} />
+            
+            {/* Population Density Layer */}
+            <Box sx={{ mb: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={layers.population.enabled}
+                    onChange={(e) => {
+                      updateLayer("population", {
+                        enabled: e.target.checked,
+                      });
+                      if (
+                        e.target.checked &&
+                        layers.population.variant === "h3-3d"
+                      ) {
+                        setViewState((prev) => ({
+                          ...prev,
+                          pitch: 45,
+                        }));
+                      } else if (!e.target.checked) {
+                        setViewState((prev) => ({ ...prev, pitch: 0 }));
                       }
-                      label=""
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Box>
-                </AccordionSummary>
-                <AccordionDetails>
-                  <Box
-                    sx={{ display: "flex", flexDirection: "column", gap: 2 }}
-                  >
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Data Source</InputLabel>
-                      <Select
-                        value={layers.population.source}
-                        label="Data Source"
-                        onChange={(e) => {
-                          updateLayer("population", {
-                            source: e.target.value,
-                            loaded: false,
-                            data: [],
-                          });
-                        }}
-                      >
-                        <MenuItem value="kontur">US - Full Resolution</MenuItem>
-                        <MenuItem value="census">Regional - R6</MenuItem>
-                      </Select>
-                    </FormControl>
+                    }}
+                  />
+                }
+                label="Population Density"
+              />
+              
+              {layers.population.enabled && (
+                <Box sx={{ ml: 4, mt: 1, display: "flex", flexDirection: "column", gap: 1.5 }}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Data Source</InputLabel>
+                    <Select
+                      value={layers.population.source}
+                      label="Data Source"
+                      onChange={(e) => {
+                        updateLayer("population", {
+                          source: e.target.value,
+                          loaded: false,
+                          data: [],
+                        });
+                      }}
+                    >
+                      <MenuItem value="kontur">US - Full Resolution</MenuItem>
+                      <MenuItem value="census">Regional - R6</MenuItem>
+                    </Select>
+                  </FormControl>
 
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Visualization</InputLabel>
-                      <Select
-                        value={layers.population.variant}
-                        label="Visualization"
-                        onChange={(e) => {
-                          updateLayer("population", {
-                            variant: e.target.value,
-                          });
-                          setViewState((prev) => ({
-                            ...prev,
-                            pitch: e.target.value === "h3-3d" ? 45 : 0,
-                          }));
-                        }}
-                      >
-                        <MenuItem value="h3">H3 Clusters (Flat)</MenuItem>
-                        <MenuItem value="h3-3d">H3 Clusters (3D)</MenuItem>
-                      </Select>
-                    </FormControl>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Visualization</InputLabel>
+                    <Select
+                      value={layers.population.variant}
+                      label="Visualization"
+                      onChange={(e) => {
+                        updateLayer("population", {
+                          variant: e.target.value,
+                        });
+                        setViewState((prev) => ({
+                          ...prev,
+                          pitch: e.target.value === "h3-3d" ? 45 : 0,
+                        }));
+                      }}
+                    >
+                      <MenuItem value="h3">H3 Clusters (Flat)</MenuItem>
+                      <MenuItem value="h3-3d">H3 Clusters (3D)</MenuItem>
+                    </Select>
+                  </FormControl>
 
-                    {layers.population.loading && (
-                      <Box
-                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                      >
-                        <CircularProgress size={16} />
-                        <Typography variant="body2" color="primary">
-                          Loading population data...
-                        </Typography>
-                      </Box>
-                    )}
+                  {layers.population.loading && (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <CircularProgress size={16} />
+                      <Typography variant="body2" color="primary">
+                        Loading...
+                      </Typography>
+                    </Box>
+                  )}
 
-                    {layers.population.error && (
-                      <Alert severity="error" sx={{ fontSize: "0.875rem" }}>
-                        {layers.population.error}
-                      </Alert>
-                    )}
+                  {layers.population.error && (
+                    <Alert severity="error" sx={{ fontSize: "0.75rem", py: 0.5 }}>
+                      {layers.population.error}
+                    </Alert>
+                  )}
 
-                    {layers.population.data.length > 0 && (
-                      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                        <Chip
-                          label={`${layers.population.data.length} clusters`}
-                          variant="outlined"
-                          size="small"
-                        />
-                        <Chip
-                          label={
-                            layers.population.source === "kontur"
-                              ? "Kontur"
-                              : "Census"
-                          }
-                          variant="outlined"
-                          size="small"
-                          color="primary"
-                        />
-                      </Box>
-                    )}
-
-                    <Typography variant="caption" color="text.secondary">
-                      H3 hexagonal grid population clusters from{" "}
-                      {layers.population.source === "kontur"
-                        ? "Kontur Population Dataset"
-                        : "US Census data"}
-                    </Typography>
-                  </Box>
-                </AccordionDetails>
-              </Accordion>
-
-              {/* Future layer types can be added here */}
-              <Box sx={{ mt: 2, p: 2, bgcolor: "grey.50", borderRadius: 1 }}>
-                <Typography variant="caption" color="text.secondary">
-                  Additional layer types (Traffic, Weather, Energy, etc.) can be
-                  added here
-                </Typography>
-              </Box>
-
-              {MAPBOX_ACCESS_TOKEN === "YOUR_MAPBOX_TOKEN_HERE" && (
-                <Alert severity="warning" sx={{ mt: 2 }}>
-                  Add your Mapbox token to NEXT_PUBLIC_MAPBOX_TOKEN
-                </Alert>
+                  {layers.population.data.length > 0 && (
+                    <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
+                      <Chip
+                        label={`${layers.population.data.length} clusters`}
+                        variant="outlined"
+                        size="small"
+                      />
+                      <Chip
+                        label={
+                          layers.population.source === "kontur"
+                            ? "Kontur"
+                            : "Census"
+                        }
+                        variant="outlined"
+                        size="small"
+                        color="primary"
+                      />
+                    </Box>
+                  )}
+                </Box>
               )}
             </Box>
-          </Collapse>
-        </Paper>
+            
+            {MAPBOX_ACCESS_TOKEN === "YOUR_MAPBOX_TOKEN_HERE" && (
+              <Alert severity="warning" sx={{ mt: 2, fontSize: "0.75rem" }}>
+                Add your Mapbox token to NEXT_PUBLIC_MAPBOX_TOKEN
+              </Alert>
+            )}
+          </Paper>
+        </Popover>
       </Box>
 
       <Map

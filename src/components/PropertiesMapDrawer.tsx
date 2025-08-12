@@ -21,74 +21,12 @@ import {
   fetchLocalBuildings,
   transformBuildingToProperty,
 } from "@/lib/queries-local";
+
 interface PropertiesMapDrawerProps {
   open: boolean;
   onClose: () => void;
   drawerWidth?: number;
 }
-
-const mockProperties: Property[] = [
-  {
-    id: "1",
-    name: "Office Building A",
-    address: "123 Main St, City Center",
-    type: "Office",
-    energyRating: "A+",
-    coordinates: { lat: 40.7128, lng: -74.006 },
-    energyMetrics: {
-      consumption: 1250,
-      cost: 8028,
-      efficiency: 92,
-      lastUpdated: "2024-01-31T10:30:00Z",
-    },
-    buildingInfo: {
-      floors: 12,
-      rooms: 245,
-      area: 25000,
-      yearBuilt: 2018,
-    },
-  },
-  {
-    id: "2",
-    name: "Retail Complex B",
-    address: "456 Commerce Ave, Downtown",
-    type: "Retail",
-    energyRating: "B+",
-    coordinates: { lat: 40.758, lng: -73.9855 },
-    energyMetrics: {
-      consumption: 980,
-      cost: 6420,
-      efficiency: 85,
-      lastUpdated: "2024-01-31T10:15:00Z",
-    },
-    buildingInfo: {
-      floors: 3,
-      rooms: 45,
-      area: 8500,
-      yearBuilt: 2015,
-    },
-  },
-  {
-    id: "3",
-    name: "Industrial Facility C",
-    address: "789 Industrial Blvd, Manufacturing District",
-    type: "Industrial",
-    energyRating: "B",
-    coordinates: { lat: 40.6892, lng: -74.0445 },
-    energyMetrics: {
-      consumption: 2100,
-      cost: 12850,
-      efficiency: 78,
-      lastUpdated: "2024-01-31T09:45:00Z",
-    },
-    buildingInfo: {
-      floors: 2,
-      rooms: 85,
-      area: 45000,
-      yearBuilt: 2012,
-    },
-  },
-];
 
 const PropertiesMapDrawer = ({
   open,
@@ -98,25 +36,17 @@ const PropertiesMapDrawer = ({
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(
     null
   );
-  const [properties, setProperties] = useState(mockProperties);
+  const [properties, setProperties] = useState<Property[]>([]);
   const [dataSource, setDataSource] = useState("demo");
   const [loading, setLoading] = useState(false);
 
   // Fallback API queries
-  const {
-    data: buildingsData,
-    loading: buildingsLoading,
-    error: buildingsError,
-  } = useQuery(GET_BUILDINGS, {
+  const { data: buildingsData } = useQuery(GET_BUILDINGS, {
     errorPolicy: "ignore",
     skip: !open,
   });
 
-  const {
-    data: sitesData,
-    loading: sitesLoading,
-    error: sitesError,
-  } = useQuery(GET_SITES, {
+  const { data: sitesData } = useQuery(GET_SITES, {
     errorPolicy: "ignore",
     skip: !open,
   });
@@ -245,8 +175,7 @@ const PropertiesMapDrawer = ({
     }
   }, [buildingsData, sitesData, dataSource, loading]);
 
-  const isLoading = loading || buildingsLoading || sitesLoading;
-  const error = buildingsError || sitesError;
+  // Note: loading state is derived locally; GraphQL loading/error are ignored in this component
 
   const getRatingColor = (rating: string) => {
     switch (rating) {

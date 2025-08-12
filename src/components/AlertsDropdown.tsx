@@ -26,7 +26,14 @@ import {
 import { Alert } from '@/types/energy';
 import { useBuildingData } from '@/contexts/DataContext';
 
-const AlertsDropdown = () => {
+interface AlertsDropdownProps {
+  schedulerStatus?: {
+    isRunning: boolean;
+    nextSyncTime?: string;
+  } | null;
+}
+
+const AlertsDropdown = ({ schedulerStatus }: AlertsDropdownProps) => {
   const { buildings, buildingsLoading } = useBuildingData();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
@@ -183,24 +190,19 @@ const AlertsDropdown = () => {
           },
         }}
       >
-        {/* Header */}
-        <Box sx={{ px: 2, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="h6" sx={{ fontSize: '1.1rem' }}>
-              Alerts
+        {/* Status Section */}
+        {buildings.length > 0 && [
+          <Box key="status" sx={{ px: 2, py: 1.5 }}>
+            <Typography variant="body2" sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 0.5 }}>
+              {buildings.length} buildings connected
             </Typography>
-            {buildings.length > 0 && (
+            {schedulerStatus?.isRunning && (
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                <Chip 
-                  label="Building Portfolio"
-                  size="small" 
-                  color="primary"
-                  variant="outlined"
-                />
                 <Box
+                  component="span"
                   sx={{
-                    width: 6,
-                    height: 6,
+                    width: 4,
+                    height: 4,
                     borderRadius: "50%",
                     bgcolor: "success.main",
                     animation: "pulse 2s infinite",
@@ -211,8 +213,27 @@ const AlertsDropdown = () => {
                     },
                   }}
                 />
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontSize: "0.7rem",
+                    color: "success.main",
+                  }}
+                >
+                  Auto-sync every hour
+                </Typography>
               </Box>
             )}
+          </Box>,
+          <Divider key="divider" />
+        ]}
+
+        {/* Header */}
+        <Box sx={{ px: 2, py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="h6" sx={{ fontSize: '1.1rem' }}>
+              Alerts
+            </Typography>
           </Box>
           <Typography variant="caption" color="text.secondary">
             {unreadCount} new

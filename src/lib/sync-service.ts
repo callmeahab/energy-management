@@ -637,8 +637,10 @@ export class SyncService {
           continue; // Skip null values
         }
 
-        // Generate unique ID for this energy reading
-        const energyId = `${point.id}_${new Date(timestamp).getTime()}`;
+        // Generate unique ID for this energy reading (one per hour)
+        const timestampDate = new Date(timestamp);
+        const hourBucket = new Date(timestampDate.getFullYear(), timestampDate.getMonth(), timestampDate.getDate(), timestampDate.getHours());
+        const energyId = `${point.id}_${hourBucket.getTime()}`;
         
         // Extract numeric value for consumption/cost calculation
         const numericValue = typeof value === 'number' ? value : 
@@ -656,38 +658,41 @@ export class SyncService {
         const cost = consumption * 0.12; // Assume $0.12 per kWh
         const efficiency = Math.min(Math.max(0.7 + Math.random() * 0.3, 0), 1); // Random efficiency 0.7-1.0
 
-        const upsertSql = `
-          INSERT INTO energy_usage (
-            id, building_id, floor_id, space_id, timestamp,
-            consumption_kwh, cost_usd, efficiency_score,
-            temperature_celsius, occupancy_count, usage_type,
-            source, sync_timestamp
-          ) VALUES (
-            '${energyId.replace(/'/g, "''")}',
-            '${buildingId.replace(/'/g, "''")}',
-            ${floorId ? `'${floorId.replace(/'/g, "''")}'` : 'NULL'},
-            ${spaceId ? `'${spaceId.replace(/'/g, "''")}'` : 'NULL'},
-            '${timestamp}',
-            ${consumption},
-            ${cost},
-            ${efficiency},
-            NULL, NULL,
-            '${point.exactType?.replace(/'/g, "''") || 'sensor'}',
-            'mapped_api',
-            '${currentTime}'
-          )
-          ON CONFLICT (id) DO UPDATE SET
-            consumption_kwh = ${consumption},
-            cost_usd = ${cost},
-            efficiency_score = ${efficiency},
-            usage_type = '${point.exactType?.replace(/'/g, "''") || 'sensor'}',
-            source = 'mapped_api',
-            sync_timestamp = '${currentTime}'
-        `;
+        // Check if record already exists for this hour
+        const existingRecord = await runQuerySingle(
+          'SELECT id FROM energy_usage WHERE id = ?',
+          [energyId]
+        );
 
-        await runCommand(upsertSql);
-        recordsUpserted++;
-        console.log(`Upserted energy data: ${energyId} (${powerWatts}W -> ${consumption.toFixed(3)} kWh)`);
+        if (!existingRecord) {
+          const insertSql = `
+            INSERT INTO energy_usage (
+              id, building_id, floor_id, space_id, timestamp,
+              consumption_kwh, cost_usd, efficiency_score,
+              temperature_celsius, occupancy_count, usage_type,
+              source, sync_timestamp
+            ) VALUES (
+              '${energyId.replace(/'/g, "''")}',
+              '${buildingId.replace(/'/g, "''")}',
+              ${floorId ? `'${floorId.replace(/'/g, "''")}'` : 'NULL'},
+              ${spaceId ? `'${spaceId.replace(/'/g, "''")}'` : 'NULL'},
+              '${hourBucket.toISOString()}',
+              ${consumption},
+              ${cost},
+              ${efficiency},
+              NULL, NULL,
+              '${point.exactType?.replace(/'/g, "''") || 'sensor'}',
+              'mapped_api',
+              '${currentTime}'
+            )
+          `;
+
+          await runCommand(insertSql);
+          recordsUpserted++;
+          console.log(`Inserted new hourly energy data: ${energyId} (${powerWatts}W -> ${consumption.toFixed(3)} kWh)`);
+        } else {
+          console.log(`Skipping existing hourly record: ${energyId}`);
+        }
 
       } catch (error) {
         console.error(`Error upserting energy data for point ${point.id}:`, error);
