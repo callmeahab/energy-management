@@ -1,7 +1,14 @@
-'use client';
+"use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { TimeRange } from '@/types/energy';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useCallback,
+} from "react";
+import { TimeRange } from "@/types/energy";
 
 // Types for our data context
 export interface LocalBuildingData {
@@ -39,6 +46,9 @@ export interface LocalEnergyData {
   avg_temperature: number;
   avg_occupancy: number;
   record_count: number;
+  // Optional renewable metrics (enriched by backend if available)
+  renewable_consumption?: number;
+  renewable_cost?: number;
 }
 
 interface EnergyDataSummary {
@@ -50,6 +60,9 @@ interface EnergyDataSummary {
   avg_efficiency: number;
   earliest_record: string;
   latest_record: string;
+  // Optional aggregated renewable metrics (if backend provides)
+  total_renewable_consumption?: number;
+  total_renewable_cost?: number;
 }
 
 interface DataContextType {
@@ -58,7 +71,7 @@ interface DataContextType {
   buildingsLoading: boolean;
   buildingsError: string | null;
   refreshBuildings: () => Promise<void>;
-  
+
   // Energy data
   energyData: LocalEnergyData[];
   energySummary: EnergyDataSummary | null;
@@ -66,7 +79,7 @@ interface DataContextType {
   energyError: string | null;
   currentTimeRange: TimeRange;
   refreshEnergyData: (timeRange?: TimeRange) => Promise<void>;
-  
+
   // Sync status
   lastSyncTime: string | null;
   triggerSync: () => Promise<void>;
@@ -81,19 +94,21 @@ interface DataProviderProps {
 export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   // Hydration state
   const [isHydrated, setIsHydrated] = useState(false);
-  
+
   // Building data state
   const [buildings, setBuildings] = useState<LocalBuildingData[]>([]);
   const [buildingsLoading, setBuildingsLoading] = useState(true);
   const [buildingsError, setBuildingsError] = useState<string | null>(null);
-  
+
   // Energy data state
   const [energyData, setEnergyData] = useState<LocalEnergyData[]>([]);
-  const [energySummary, setEnergySummary] = useState<EnergyDataSummary | null>(null);
+  const [energySummary, setEnergySummary] = useState<EnergyDataSummary | null>(
+    null
+  );
   const [energyLoading, setEnergyLoading] = useState(true);
   const [energyError, setEnergyError] = useState<string | null>(null);
-  const [currentTimeRange, setCurrentTimeRange] = useState<TimeRange>('day');
-  
+  const [currentTimeRange, setCurrentTimeRange] = useState<TimeRange>("day");
+
   // Sync state
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [lastSyncCheck, setLastSyncCheck] = useState<string | null>(null);
@@ -107,154 +122,175 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   const refreshBuildings = useCallback(async () => {
     setBuildingsLoading(true);
     setBuildingsError(null);
-    
+
     try {
-      const response = await fetch('/api/buildings?includeStats=true');
+      const response = await fetch("/api/buildings?includeStats=true");
       const result = await response.json();
-      
+
       if (result.success && result.data.buildings) {
         setBuildings(result.data.buildings);
-        console.log(`DataProvider: Loaded ${result.data.buildings.length} buildings`);
+        console.log(
+          `DataProvider: Loaded ${result.data.buildings.length} buildings`
+        );
       } else {
-        setBuildingsError(result.error || 'Failed to fetch buildings');
+        setBuildingsError(result.error || "Failed to fetch buildings");
       }
     } catch (error) {
-      setBuildingsError(error instanceof Error ? error.message : 'Unknown error');
-      console.error('DataProvider: Error fetching buildings:', error);
+      setBuildingsError(
+        error instanceof Error ? error.message : "Unknown error"
+      );
+      console.error("DataProvider: Error fetching buildings:", error);
     } finally {
       setBuildingsLoading(false);
     }
   }, []);
 
   // Fetch energy data
-  const refreshEnergyData = useCallback(async (timeRange: TimeRange = 'month') => {
-    setEnergyLoading(true);
-    setEnergyError(null);
-    setCurrentTimeRange(timeRange);
-    
-    try {
-      const timeRangeMap = {
-        'hour': '1h' as const,
-        'day': '24h' as const, 
-        'week': '7d' as const,
-        'month': '30d' as const
-      };
-      
-      const apiTimeRange = timeRangeMap[timeRange] || '24h';
-      const response = await fetch(`/api/energy?timeRange=${apiTimeRange}&aggregation=hourly`);
-      const result = await response.json();
-      
-      if (result.success) {
-        setEnergyData(result.data.energyData || []);
-        setEnergySummary(result.data.summary || null);
-        console.log(`DataProvider: Loaded ${result.data.energyData?.length || 0} energy records for ${timeRange}`);
-      } else {
-        setEnergyError(result.error || 'Failed to fetch energy data');
+  const refreshEnergyData = useCallback(
+    async (timeRange: TimeRange = "month") => {
+      setEnergyLoading(true);
+      setEnergyError(null);
+      setCurrentTimeRange(timeRange);
+
+      try {
+        const timeRangeMap = {
+          hour: "1h" as const,
+          day: "24h" as const,
+          week: "7d" as const,
+          month: "30d" as const,
+        };
+
+        const apiTimeRange = timeRangeMap[timeRange] || "24h";
+        const response = await fetch(
+          `/api/energy?timeRange=${apiTimeRange}&aggregation=hourly`
+        );
+        const result = await response.json();
+
+        if (result.success) {
+          setEnergyData(result.data.energyData || []);
+          setEnergySummary(result.data.summary || null);
+          console.log(
+            `DataProvider: Loaded ${
+              result.data.energyData?.length || 0
+            } energy records for ${timeRange}`
+          );
+        } else {
+          setEnergyError(result.error || "Failed to fetch energy data");
+        }
+      } catch (error) {
+        setEnergyError(
+          error instanceof Error ? error.message : "Unknown error"
+        );
+        console.error("DataProvider: Error fetching energy data:", error);
+      } finally {
+        setEnergyLoading(false);
       }
-    } catch (error) {
-      setEnergyError(error instanceof Error ? error.message : 'Unknown error');
-      console.error('DataProvider: Error fetching energy data:', error);
-    } finally {
-      setEnergyLoading(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   // Trigger data synchronization
   const triggerSync = useCallback(async () => {
     try {
-      const response = await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ syncType: 'full' })
+      const response = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ syncType: "full" }),
       });
-      
+
       const result = await response.json();
-      
+
       if (result.success) {
         setLastSyncTime(new Date().toISOString());
         // Refresh data after successful sync
         await Promise.all([
           refreshBuildings(),
-          refreshEnergyData(currentTimeRange)
+          refreshEnergyData(currentTimeRange),
         ]);
-        console.log('DataProvider: Sync completed, data refreshed');
+        console.log("DataProvider: Sync completed, data refreshed");
       } else {
-        console.error('DataProvider: Sync failed:', result.message);
+        console.error("DataProvider: Sync failed:", result.message);
       }
     } catch (error) {
-      console.error('DataProvider: Error triggering sync:', error);
+      console.error("DataProvider: Error triggering sync:", error);
     }
   }, [refreshBuildings, refreshEnergyData, currentTimeRange]);
 
   // Initial data loading - only after hydration
   useEffect(() => {
     if (!isHydrated) return;
-    
+
     const loadInitialData = async () => {
       await Promise.all([
         refreshBuildings(),
-        refreshEnergyData('day') // Default to day view
+        refreshEnergyData("day"), // Default to day view
       ]);
     };
-    
+
     loadInitialData();
   }, [isHydrated, refreshBuildings, refreshEnergyData]);
 
   // Monitor sync status and auto-refresh data
   useEffect(() => {
     if (!isHydrated) return;
-    
+
     const checkForNewSyncs = async () => {
       try {
-        const response = await fetch('/api/sync');
+        const response = await fetch("/api/sync");
         const result = await response.json();
         if (result.success && result.data.lastSync) {
           const newSyncTime = result.data.lastSync.last_sync_timestamp;
-          
+
           // If this is a new sync (different from last known sync)
           if (newSyncTime !== lastSyncCheck) {
-            console.log('DataProvider: New sync detected, refreshing data...');
+            console.log("DataProvider: New sync detected, refreshing data...");
             setLastSyncTime(newSyncTime);
             setLastSyncCheck(newSyncTime);
-            
+
             // Auto-refresh both buildings and energy data
             await Promise.all([
               refreshBuildings(),
-              refreshEnergyData(currentTimeRange)
+              refreshEnergyData(currentTimeRange),
             ]);
-            
-            console.log('DataProvider: Data refreshed after sync completion');
+
+            console.log("DataProvider: Data refreshed after sync completion");
           }
         }
       } catch (error) {
-        console.error('DataProvider: Error checking sync status:', error);
+        console.error("DataProvider: Error checking sync status:", error);
       }
     };
-    
+
     // Initial sync status check
     checkForNewSyncs();
-    
+
     // Poll for sync changes every 2 minutes
     const syncCheckInterval = setInterval(checkForNewSyncs, 120000); // 2 minutes
-    
+
     return () => clearInterval(syncCheckInterval);
-  }, [isHydrated, lastSyncCheck, refreshBuildings, refreshEnergyData, currentTimeRange]);
+  }, [
+    isHydrated,
+    lastSyncCheck,
+    refreshBuildings,
+    refreshEnergyData,
+    currentTimeRange,
+  ]);
 
   const contextValue: DataContextType = {
     buildings,
     buildingsLoading,
     buildingsError,
     refreshBuildings,
-    
+
     energyData,
     energySummary,
     energyLoading,
     energyError,
     currentTimeRange,
     refreshEnergyData,
-    
+
     lastSyncTime,
-    triggerSync
+    triggerSync,
   };
 
   // Don't render children until hydration is complete to prevent hydration mismatch
@@ -263,43 +299,42 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   }
 
   return (
-    <DataContext.Provider value={contextValue}>
-      {children}
-    </DataContext.Provider>
+    <DataContext.Provider value={contextValue}>{children}</DataContext.Provider>
   );
 };
 
 export const useDataContext = () => {
   const context = useContext(DataContext);
   if (context === undefined) {
-    throw new Error('useDataContext must be used within a DataProvider');
+    throw new Error("useDataContext must be used within a DataProvider");
   }
   return context;
 };
 
 // Custom hooks for specific data needs
 export const useBuildingData = () => {
-  const { buildings, buildingsLoading, buildingsError, refreshBuildings } = useDataContext();
+  const { buildings, buildingsLoading, buildingsError, refreshBuildings } =
+    useDataContext();
   return { buildings, buildingsLoading, buildingsError, refreshBuildings };
 };
 
 export const useEnergyData = () => {
-  const { 
-    energyData, 
-    energySummary, 
-    energyLoading, 
-    energyError, 
-    currentTimeRange, 
-    refreshEnergyData 
+  const {
+    energyData,
+    energySummary,
+    energyLoading,
+    energyError,
+    currentTimeRange,
+    refreshEnergyData,
   } = useDataContext();
-  
-  return { 
-    energyData, 
-    energySummary, 
-    energyLoading, 
-    energyError, 
-    currentTimeRange, 
-    refreshEnergyData 
+
+  return {
+    energyData,
+    energySummary,
+    energyLoading,
+    energyError,
+    currentTimeRange,
+    refreshEnergyData,
   };
 };
 

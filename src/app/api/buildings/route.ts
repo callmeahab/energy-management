@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
             COUNT(*) as record_count,
             MAX(timestamp) as latest_record
           FROM energy_usage
-          WHERE building_id = ? AND timestamp >= (CURRENT_TIMESTAMP - INTERVAL '1 day')
+          WHERE building_id = ? AND timestamp >= datetime('now', '-1 day')
         `, [buildingId]);
       }
       
@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
           COUNT(*) as record_count,
           MAX(timestamp) as latest_record
         FROM energy_usage
-        WHERE timestamp >= (CURRENT_TIMESTAMP - INTERVAL '1 day')
+        WHERE timestamp >= datetime('now', '-1 day')
         GROUP BY building_id
       `);
       

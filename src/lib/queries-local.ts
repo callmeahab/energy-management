@@ -1,5 +1,5 @@
 // Local database queries for energy efficiency dashboard
-// These queries fetch data from the local DuckDB instead of the remote GraphQL API
+// These queries fetch data from the local SQLite database instead of the remote GraphQL API
 
 export interface LocalEnergyData {
   period: string;

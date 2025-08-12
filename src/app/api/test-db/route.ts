@@ -19,7 +19,7 @@ export async function GET() {
     
     return NextResponse.json({
       success: true,
-      message: 'DuckDB connection successful',
+      message: 'SQLite connection successful',
       data: {
         buildingCount: Number(buildingCount[0]?.count || 0),
         energyCount: Number(energyCount[0]?.count || 0),

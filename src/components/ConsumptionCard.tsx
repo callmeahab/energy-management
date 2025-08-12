@@ -7,43 +7,81 @@ import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from "recharts";
 import NorthIcon from "@mui/icons-material/North";
 import SouthIcon from "@mui/icons-material/South";
 
-import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
+import { useEnergyData, LocalEnergyData } from "@/contexts/DataContext";
+import { computeRenewableSplit } from "@/lib/energy-derived";
+
+// Local / derived types for the chart and metrics in this component
+interface ExtendedEnergyRecord extends LocalEnergyData {
+  label?: string; // Some APIs may provide a friendly label
+  timestamp?: string; // Fallback timestamp when period not present
+}
+
+interface ChartDatum {
+  day: string;
+  energyCost: number;
+  renewableEnergyCost: number;
+  energyConsumption: number;
+  renewableEnergyConsumption: number;
+}
+
+interface Metrics {
+  currentCost: number;
+  currentConsumption: number;
+  costChange: number;
+  consumptionChange: number;
+  dataSource: "mapped-api"; // Currently only one source value used
+  sensorCount: number;
+  lastUpdate: string;
+}
 
 const ConsumptionCard = () => {
   const { energyData, energySummary, energyLoading } = useEnergyData();
-  const { buildings } = useBuildingData();
+  // Building data currently unused in this card but hook kept for potential future feature usage
+  // const { buildings } = useBuildingData();
   const [viewMode, setViewMode] = useState<"kwh" | "cost">("cost");
 
-  const chartData = useMemo(() => {
-    if (energyData.length === 0) {
-      return [];
-    }
+  const chartData = useMemo<ChartDatum[]>(() => {
+    if (energyData.length === 0) return [];
 
-    return energyData.map((item: any) => {
+    return energyData.map((item) => {
+      const record = item as ExtendedEnergyRecord; // Narrow to our extended shape
+      const cost = record.total_cost ?? record.avg_cost ?? 0;
+      const consumption =
+        record.total_consumption ?? record.avg_consumption ?? 0;
+      const day =
+        record.label ||
+        record.period ||
+        (record.timestamp
+          ? new Date(record.timestamp).toLocaleDateString()
+          : "");
+
+      const { renewableCost, renewableConsumption } =
+        computeRenewableSplit(record);
+
       return {
-        day:
-          item.label ||
-          item.period ||
-          new Date(item.period || item.timestamp).toLocaleDateString(),
-        energyCost: item.total_cost || item.avg_cost || 0,
-        renewableEnergyCost: (item.total_cost || item.avg_cost || 0) * 0.7,
-        energyConsumption: item.total_consumption || item.avg_consumption || 0,
-        renewableEnergyConsumption:
-          (item.total_consumption || item.avg_consumption || 0) * 0.8,
+        day,
+        energyCost: cost,
+        renewableEnergyCost: renewableCost,
+        energyConsumption: consumption,
+        renewableEnergyConsumption: renewableConsumption,
       };
     });
   }, [energyData]);
 
-  const metrics = useMemo(() => {
+  const metrics = useMemo<Metrics | null>(() => {
     if (energySummary && energySummary.total_records > 0) {
       return {
         currentCost: Math.round(
-          energySummary.total_cost || energySummary.avg_cost * 24 || 0
+          energySummary.total_cost !== undefined &&
+            energySummary.total_cost !== null
+            ? energySummary.total_cost
+            : energySummary.avg_cost * 24
         ),
         currentConsumption: Math.round(
-          energySummary.total_consumption ||
-            energySummary.avg_consumption * 24 ||
-            0
+          energySummary.total_consumption !== undefined &&
+            energySummary.total_consumption !== null
+            ? energySummary.total_consumption
+            : energySummary.avg_consumption * 24
         ),
         costChange: Math.round((Math.random() * 8 - 2) * 10) / 10,
         consumptionChange: Math.round((Math.random() * 6 - 1) * 10) / 10,
@@ -52,7 +90,6 @@ const ConsumptionCard = () => {
         lastUpdate: energySummary.latest_record,
       };
     }
-
     return null;
   }, [energySummary]);
 
@@ -257,7 +294,9 @@ const ConsumptionCard = () => {
                     }}
                   >
                     <NorthIcon fontSize="small" />
-                    <Box sx={{ fontSize: "0.9rem" }}>{metrics?.costChange || 0}%</Box>
+                    <Box sx={{ fontSize: "0.9rem" }}>
+                      {metrics?.costChange || 0}%
+                    </Box>
                   </Box>
                 </Box>
               </Box>
@@ -345,7 +384,8 @@ const ConsumptionCard = () => {
                   mb: 1,
                 }}
               >
-                Last updated: {new Date(metrics?.lastUpdate || '').toLocaleString()}
+                Last updated:{" "}
+                {new Date(metrics?.lastUpdate || "").toLocaleString()}
               </Box>
             )}
 

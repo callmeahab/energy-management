@@ -23,8 +23,7 @@ import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
 import ConsumptionCard from "./ConsumptionCard";
 import CostSavingChart from "./CostSavingChart";
 import AlertsDropdown from "./AlertsDropdown";
-import SpaceEfficiencyCard from "./SpaceEfficiencyCard";
-import EnergyInefficiencyCard from "./EnergyInefficiencyCard";
+import CombinedEfficiencyCard from "./CombinedEfficiencyCard";
 import BuildingFloorPlan from "./BuildingFloorPlan";
 import PropertiesMapDrawer from "./PropertiesMapDrawer";
 import SyncStatusModal from "./SyncStatusModal";
@@ -267,20 +266,11 @@ const EnergyDashboard = () => {
             <Grid size={{ 
               xs: 12, 
               sm: 12, 
-              md: propertiesDrawerOpen ? 6 : 12, 
-              lg: propertiesDrawerOpen ? 6 : 3, 
-              xl: propertiesDrawerOpen ? 6 : 2 
+              md: 12, 
+              lg: propertiesDrawerOpen ? 12 : 12, 
+              xl: propertiesDrawerOpen ? 12 : 8 
             }}>
-              <SpaceEfficiencyCard />
-            </Grid>
-            <Grid size={{ 
-              xs: 12, 
-              sm: 12, 
-              md: propertiesDrawerOpen ? 6 : 12, 
-              lg: propertiesDrawerOpen ? 6 : 3, 
-              xl: propertiesDrawerOpen ? 6 : 2 
-            }}>
-              <EnergyInefficiencyCard />
+              <CombinedEfficiencyCard />
             </Grid>
           </Grid>
 

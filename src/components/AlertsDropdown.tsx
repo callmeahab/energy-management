@@ -225,7 +225,7 @@ const AlertsDropdown = ({ schedulerStatus }: AlertsDropdownProps) => {
               </Box>
             )}
           </Box>,
-          <Divider key="divider" />
+          <Divider key="status-divider" />
         ]}
 
         {/* Header */}
@@ -250,7 +250,7 @@ const AlertsDropdown = ({ schedulerStatus }: AlertsDropdownProps) => {
             </Typography>
           </Box>
         ) : alerts.length > 0 ? (
-          <>
+          <Box>
             {alerts.map((alert, index) => (
               <MenuItem key={alert.id} sx={{ 
                 py: 0,
@@ -329,7 +329,6 @@ const AlertsDropdown = ({ schedulerStatus }: AlertsDropdownProps) => {
             
             <Divider sx={{ mt: 1 }} />
             
-            {/* Footer Actions */}
             <Box sx={{ px: 2, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <Button
                 size="small"
@@ -347,7 +346,7 @@ const AlertsDropdown = ({ schedulerStatus }: AlertsDropdownProps) => {
                 Mark All Read
               </Button>
             </Box>
-          </>
+          </Box>
         ) : (
           <Box sx={{ px: 2, py: 3, textAlign: 'center' }}>
             <CheckCircle color="success" sx={{ fontSize: 40, mb: 1 }} />
