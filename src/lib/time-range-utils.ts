@@ -9,27 +9,16 @@ export interface TimeRangeConfig {
 
 export const getTimeRangeConfig = (timeRange: TimeRange): TimeRangeConfig => {
   switch (timeRange) {
-    case 'hour':
+    case 'day':
       return {
-        sqlTrunc: 'minute', // 15-minute intervals for hour view
+        sqlTrunc: 'minute',
         sqlFormat: '%Y-%m-%d %H:%M:00',
         labelFormat: (date: Date) => date.toLocaleTimeString('en-US', { 
           hour: 'numeric', 
           minute: '2-digit',
           hour12: true 
         }),
-        aggregation: 'minute'
-      };
-    
-    case 'day':
-      return {
-        sqlTrunc: 'hour',
-        sqlFormat: '%Y-%m-%d %H:00:00',
-        labelFormat: (date: Date) => date.toLocaleTimeString('en-US', { 
-          hour: 'numeric', 
-          hour12: true 
-        }),
-        aggregation: 'hourly'
+        aggregation: '30minute'
       };
     
     case 'week':
@@ -42,18 +31,13 @@ export const getTimeRangeConfig = (timeRange: TimeRange): TimeRangeConfig => {
     
     case 'month':
       return {
-        sqlTrunc: 'week',
-        sqlFormat: '%Y-%W', // Year-Week format
-        labelFormat: (date: Date, index?: number) => {
-          // For month view, show week numbers
-          if (typeof index === 'number') {
-            return `Week ${index + 1}`;
-          }
-          // Fallback: calculate week number from date
-          const weekNumber = getWeekNumber(date);
-          return `Week ${weekNumber}`;
-        },
-        aggregation: 'weekly'
+        sqlTrunc: 'day',
+        sqlFormat: '%Y-%m-%d', // Year-Month-Day format
+        labelFormat: (date: Date) => date.toLocaleDateString('en-US', { 
+          month: 'short', 
+          day: 'numeric' 
+        }),
+        aggregation: 'daily'
       };
     
     default:
@@ -86,8 +70,6 @@ export const formatChartLabel = (
 // Helper function to get time range duration in milliseconds
 export const getTimeRangeDuration = (timeRange: TimeRange): number => {
   switch (timeRange) {
-    case 'hour':
-      return 60 * 60 * 1000; // 1 hour
     case 'day':
       return 24 * 60 * 60 * 1000; // 24 hours
     case 'week':

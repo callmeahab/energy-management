@@ -1,63 +1,35 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+// Local minimal MapRef type fallback (avoid dependency on react-map-gl types if not installed)
+type MapRef = {
+  fitBounds?: (
+    bounds: [[number, number], [number, number]],
+    options?: { padding?: number; duration?: number }
+  ) => void;
+};
 import { Map, useControl } from "react-map-gl/mapbox";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { DeckProps } from "@deck.gl/core";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
-import { ScatterplotLayer } from "@deck.gl/layers";
-import {
-  Typography,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Box,
-  CircularProgress,
-  Alert,
-  Chip,
-  Paper,
-  Switch,
-  FormControlLabel,
-  Button,
-  Popover,
-  Divider,
-} from "@mui/material";
-import { Layers } from "@mui/icons-material";
+import { ScatterplotLayer, IconLayer } from "@deck.gl/layers";
+import { Box } from "@mui/material";
 import "mapbox-gl/dist/mapbox-gl.css";
+import {
+  generatePropertyIcon,
+  computePropertyBounds,
+  heuristicZoom,
+} from "@/lib/map-utils";
+import {
+  LayerState,
+  PopulationCluster,
+  WeatherPoint,
+  Property,
+} from "@/types/map";
+import LayerControls, { BasicViewState } from "@/components/map/LayerControls";
 
 const MAPBOX_ACCESS_TOKEN =
   process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "YOUR_MAPBOX_TOKEN_HERE";
-
-interface PopulationCluster {
-  hexagon: string;
-  population: number;
-  lat: number;
-  lng: number;
-  childCount?: number;
-  resolution?: number;
-}
-
-interface Property {
-  id: string;
-  name: string;
-  address: string;
-  type: string;
-  energyRating: string;
-  coordinates: { lat: number; lng: number };
-  energyMetrics: {
-    consumption: number;
-    cost: number;
-    efficiency: number;
-    lastUpdated: string;
-  };
-  buildingInfo: {
-    floors: number;
-    rooms: number;
-    area: number;
-    yearBuilt: number;
-  };
-}
 
 interface PopulationDensityMapProps {
   properties?: Property[];
@@ -76,7 +48,7 @@ const PopulationDensityMap = ({
   selectedProperty = null,
   onPropertySelect,
 }: PopulationDensityMapProps) => {
-  const [viewState, setViewState] = useState({
+  const [viewState, setViewState] = useState<BasicViewState>({
     longitude: -98.5795,
     latitude: 39.8283,
     zoom: 4,
@@ -86,61 +58,6 @@ const PopulationDensityMap = ({
 
   // Layer management state
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
-  const open = Boolean(anchorEl);
-  interface EiaMixPoint {
-    code: string;
-    share: number;
-    latitude?: number;
-    longitude?: number;
-    name: string;
-    period: string;
-  }
-  interface LayerConfigProperties {
-    enabled: boolean;
-    data: Property[];
-    variant: string;
-  }
-  interface LayerConfigPopulation {
-    enabled: boolean;
-    data: PopulationCluster[];
-    loading: boolean;
-    error: string | null;
-    source: string;
-    variant: string;
-    loaded: boolean;
-  }
-  interface LayerConfigEia {
-    enabled: boolean;
-    data: EiaMixPoint[];
-    loading: boolean;
-    error: string | null;
-    granularity: "hour" | "day";
-    loaded: boolean;
-  }
-  interface WeatherPoint {
-    code: string;
-    name: string;
-    latitude: number;
-    longitude: number;
-    temperature: number; // C
-    humidity?: number;
-    windSpeed?: number;
-    conditions?: string;
-  }
-  interface LayerConfigWeather {
-    enabled: boolean;
-    data: WeatherPoint[];
-    loading: boolean;
-    error: string | null;
-    variant: "temperature" | "wind";
-    loaded: boolean;
-  }
-  interface LayerState {
-    properties: LayerConfigProperties;
-    population: LayerConfigPopulation;
-    eiaMix: LayerConfigEia;
-    weather: LayerConfigWeather;
-  }
   const [layers, setLayers] = useState<LayerState>({
     properties: {
       enabled: true,
@@ -183,6 +100,10 @@ const PopulationDensityMap = ({
     // traffic: { enabled: false, data: [], loading: false, error: null, source: "mapbox", variant: "flow" },
     // weather: { enabled: false, data: [], loading: false, error: null, source: "openweather", variant: "temperature" }
   });
+
+  // Map ref for fitting bounds
+  const mapRef = useRef<MapRef | null>(null);
+  const [didFitProperties, setDidFitProperties] = useState(false);
 
   const updateLayer = useCallback(
     <K extends keyof LayerState>(
@@ -277,6 +198,39 @@ const PopulationDensityMap = ({
     updateLayer("properties", { data: properties });
   }, [properties, updateLayer]);
 
+  // Fit map to properties when they first load
+  useEffect(() => {
+    if (didFitProperties) return;
+    const props = layers.properties.data;
+    if (!props.length) return;
+    const bounds = computePropertyBounds(props);
+    if (!bounds) return;
+    if (bounds.minLat === bounds.maxLat && bounds.minLng === bounds.maxLng) {
+      const single = heuristicZoom(bounds);
+      setViewState((vs) => ({ ...vs, ...single }));
+      setDidFitProperties(true);
+      return;
+    }
+    try {
+      if (mapRef.current?.fitBounds) {
+        mapRef.current.fitBounds(
+          [
+            [bounds.minLng, bounds.minLat],
+            [bounds.maxLng, bounds.maxLat],
+          ],
+          { padding: 60, duration: 800 }
+        );
+        setDidFitProperties(true);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    const h = heuristicZoom(bounds);
+    setViewState((vs) => ({ ...vs, ...h }));
+    setDidFitProperties(true);
+  }, [layers.properties.data, didFitProperties]);
+
   // Handle layer enable/disable and data fetching
   useEffect(() => {
     const popLayer = layers.population;
@@ -317,37 +271,30 @@ const PopulationDensityMap = ({
 
     // Properties layer
     const propLayer = layers.properties;
-    if (propLayer.enabled && propLayer.data && propLayer.data.length > 0) {
+    if (propLayer.enabled && propLayer.data.length) {
       activeLayers.push(
-        new ScatterplotLayer({
-          id: "properties-layer",
+        new IconLayer({
+          id: "properties-icons",
           data: propLayer.data,
           pickable: true,
-          opacity: 0.8,
-          stroked: true,
-          filled: true,
-          radiusScale: 1,
-          radiusMinPixels: 8,
-          radiusMaxPixels: 20,
-          lineWidthMinPixels: 2,
+          sizeUnits: "pixels",
+          getSize: (d: Property) =>
+            selectedProperty && selectedProperty.id === d.id ? 52 : 44,
           getPosition: (d: Property) => [d.coordinates.lng, d.coordinates.lat],
-          getRadius: (d: Property) => {
-            // Size based on energy efficiency
-            return d.energyMetrics.efficiency > 80 ? 12 : 8;
+          getIcon: (d: Property) => {
+            const isSel = selectedProperty && selectedProperty.id === d.id;
+            return {
+              url: generatePropertyIcon(d, !!isSel),
+              width: 64,
+              height: 64,
+              anchorX: 32,
+              anchorY: 32,
+            };
           },
-          getFillColor: (d: Property) => {
-            // Color based on energy rating
-            if (selectedProperty && selectedProperty.id === d.id) {
-              return [255, 165, 0, 200]; // Orange for selected
-            }
-            const rating = d.energyRating;
-            if (rating === "A+" || rating === "A") return [76, 175, 80, 180]; // Green
-            if (rating === "B+" || rating === "B") return [255, 193, 7, 180]; // Yellow/Orange
-            return [244, 67, 54, 180]; // Red
-          },
-          getLineColor: [255, 255, 255, 255],
+          billboard: true,
           updateTriggers: {
-            getFillColor: [selectedProperty],
+            getIcon: [selectedProperty, propLayer.data],
+            getSize: [selectedProperty],
           },
         }) as unknown as LayerUnion
       );
@@ -355,9 +302,8 @@ const PopulationDensityMap = ({
 
     // Population layer
     const popLayer = layers.population;
-    if (popLayer.enabled && popLayer.data && popLayer.data.length > 0) {
+    if (popLayer.enabled && popLayer.data.length) {
       const is3D = popLayer.variant === "h3-3d";
-
       activeLayers.push(
         new H3HexagonLayer({
           id: "population-h3-layer",
@@ -369,7 +315,6 @@ const PopulationDensityMap = ({
           elevationScale: is3D ? 20 : 0,
           getHexagon: (d: PopulationCluster) => d.hexagon,
           getFillColor: (d: PopulationCluster) => {
-            // Adjust color intensity based on cluster population
             const intensity = Math.min(d.population / 1000000, 1);
             return [255 * intensity, 255 * (1 - intensity), 128, 200];
           },
@@ -388,9 +333,9 @@ const PopulationDensityMap = ({
       );
     }
 
-    // EIA Mix layer (scatter plot of BA centers sized/color by renewable share)
+    // EIA Mix layer
     const eiaLayer = layers.eiaMix;
-    if (eiaLayer.enabled && eiaLayer.data && eiaLayer.data.length > 0) {
+    if (eiaLayer.enabled && eiaLayer.data.length) {
       activeLayers.push(
         new ScatterplotLayer({
           id: "eia-mix-layer",
@@ -400,8 +345,11 @@ const PopulationDensityMap = ({
           radiusScale: 50000,
           radiusMinPixels: 6,
           radiusMaxPixels: 40,
-          getPosition: (d) => [d.longitude || 0, d.latitude || 0],
-          getRadius: (d) => 10 + d.share * 30,
+          getPosition: (d: { longitude?: number; latitude?: number }) => [
+            d.longitude || 0,
+            d.latitude || 0,
+          ],
+          getRadius: (d: { share: number }) => 10 + d.share * 30,
           getFillColor: (d) => {
             const share = d.share;
             const r = Math.round(255 * (1 - share));
@@ -415,13 +363,9 @@ const PopulationDensityMap = ({
       );
     }
 
-    // Weather layer (temperature or wind visualization)
+    // Weather layer
     const weatherLayer = layers.weather;
-    if (
-      weatherLayer.enabled &&
-      weatherLayer.data &&
-      weatherLayer.data.length > 0
-    ) {
+    if (weatherLayer.enabled && weatherLayer.data.length) {
       activeLayers.push(
         new ScatterplotLayer({
           id: "weather-layer",
@@ -432,30 +376,27 @@ const PopulationDensityMap = ({
           radiusMinPixels: 4,
           radiusMaxPixels: 30,
           getPosition: (d: WeatherPoint) => [d.longitude, d.latitude],
-          getRadius: (d: WeatherPoint) => {
-            if (weatherLayer.variant === "wind") {
-              return 8 + (d.windSpeed ? Math.min(d.windSpeed, 20) : 0);
-            }
-            return 6 + (d.temperature + 30) * 0.4; // scale with temperature
-          },
+          getRadius: (d: WeatherPoint) =>
+            weatherLayer.variant === "wind"
+              ? 8 + (d.windSpeed ? Math.min(d.windSpeed, 20) : 0)
+              : 6 + (d.temperature + 30) * 0.4,
           getFillColor: (d: WeatherPoint) => {
             if (weatherLayer.variant === "wind") {
               const speed = d.windSpeed ?? 0;
               const norm = Math.min(speed / 15, 1);
               return [50, Math.round(150 + 100 * norm), 255, 180];
             }
-            const t = d.temperature; // assume -20C to 40C range
+            const t = d.temperature;
             const clamped = Math.max(-20, Math.min(40, t));
-            const norm = (clamped + 20) / 60; // 0..1
-            // interpolate blue -> yellow -> red
+            const norm = (clamped + 20) / 60;
             let r: number, g: number, b: number;
             if (norm < 0.5) {
-              const k = norm / 0.5; // 0..1
+              const k = norm / 0.5;
               r = Math.round(0 + 255 * k);
               g = Math.round(128 * k + 128 * (1 - k));
               b = 255;
             } else {
-              const k = (norm - 0.5) / 0.5; // 0..1
+              const k = (norm - 0.5) / 0.5;
               r = 255;
               g = Math.round(255 * (1 - k));
               b = Math.round(255 * (1 - k));
@@ -468,369 +409,30 @@ const PopulationDensityMap = ({
       );
     }
 
-    // Future layers can be added here:
-    // if (layers.traffic.enabled && layers.traffic.data.length > 0) { ... }
-    // if (layers.weather.enabled && layers.weather.data.length > 0) { ... }
-
     return activeLayers;
   }, [layers, selectedProperty]);
 
-  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) =>
     setAnchorEl(event.currentTarget);
-  };
-
-  const handleClose = () => {
-    setAnchorEl(null);
-  };
+  const handleClose = () => setAnchorEl(null);
 
   return (
-    <Box sx={{ height: "400px", position: "relative" }}>
-      {/* Layer Dropdown Button */}
-      <Box
-        sx={{
-          position: "absolute",
-          top: 16,
-          right: 16,
-          zIndex: 10,
-        }}
-      >
-        <Button
-          onClick={handleClick}
-          variant="contained"
-          startIcon={<Layers />}
-          sx={{
-            bgcolor: "white",
-            color: "text.primary",
-            boxShadow: 2,
-            "&:hover": {
-              bgcolor: "grey.100",
-            },
-          }}
-        >
-          Map Layers
-        </Button>
-        <Popover
-          open={open}
-          anchorEl={anchorEl}
-          onClose={handleClose}
-          anchorOrigin={{
-            vertical: "bottom",
-            horizontal: "right",
-          }}
-          transformOrigin={{
-            vertical: "top",
-            horizontal: "right",
-          }}
-        >
-          <Paper sx={{ p: 2, minWidth: 300 }}>
-            <Typography variant="h6" sx={{ mb: 2 }}>
-              Map Layers
-            </Typography>
-
-            {/* Properties Layer Toggle */}
-            <Box sx={{ mb: 2 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={layers.properties.enabled}
-                    onChange={(e) => {
-                      updateLayer("properties", {
-                        enabled: e.target.checked,
-                      });
-                    }}
-                  />
-                }
-                label="Properties"
-              />
-            </Box>
-
-            <Divider sx={{ my: 2 }} />
-
-            {/* Population Density Layer */}
-            <Box sx={{ mb: 2 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={layers.population.enabled}
-                    onChange={(e) => {
-                      updateLayer("population", {
-                        enabled: e.target.checked,
-                      });
-                      if (
-                        e.target.checked &&
-                        layers.population.variant === "h3-3d"
-                      ) {
-                        setViewState((prev) => ({
-                          ...prev,
-                          pitch: 45,
-                        }));
-                      } else if (!e.target.checked) {
-                        setViewState((prev) => ({ ...prev, pitch: 0 }));
-                      }
-                    }}
-                  />
-                }
-                label="Population Density"
-              />
-
-              {layers.population.enabled && (
-                <Box
-                  sx={{
-                    ml: 4,
-                    mt: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 1.5,
-                  }}
-                >
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Data Source</InputLabel>
-                    <Select
-                      value={layers.population.source}
-                      label="Data Source"
-                      onChange={(e) => {
-                        updateLayer("population", {
-                          source: e.target.value,
-                          loaded: false,
-                          data: [],
-                        });
-                      }}
-                    >
-                      <MenuItem value="kontur">US - Full Resolution</MenuItem>
-                      <MenuItem value="census">Regional - R6</MenuItem>
-                    </Select>
-                  </FormControl>
-
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Visualization</InputLabel>
-                    <Select
-                      value={layers.population.variant}
-                      label="Visualization"
-                      onChange={(e) => {
-                        updateLayer("population", {
-                          variant: e.target.value,
-                        });
-                        setViewState((prev) => ({
-                          ...prev,
-                          pitch: e.target.value === "h3-3d" ? 45 : 0,
-                        }));
-                      }}
-                    >
-                      <MenuItem value="h3">H3 Clusters (Flat)</MenuItem>
-                      <MenuItem value="h3-3d">H3 Clusters (3D)</MenuItem>
-                    </Select>
-                  </FormControl>
-
-                  {layers.population.loading && (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <CircularProgress size={16} />
-                      <Typography variant="body2" color="primary">
-                        Loading...
-                      </Typography>
-                    </Box>
-                  )}
-
-                  {layers.population.error && (
-                    <Alert
-                      severity="error"
-                      sx={{ fontSize: "0.75rem", py: 0.5 }}
-                    >
-                      {layers.population.error}
-                    </Alert>
-                  )}
-
-                  {layers.population.data.length > 0 && (
-                    <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-                      <Chip
-                        label={`${layers.population.data.length} clusters`}
-                        variant="outlined"
-                        size="small"
-                      />
-                      <Chip
-                        label={
-                          layers.population.source === "kontur"
-                            ? "Kontur"
-                            : "Census"
-                        }
-                        variant="outlined"
-                        size="small"
-                        color="primary"
-                      />
-                    </Box>
-                  )}
-                </Box>
-              )}
-            </Box>
-
-            <Divider sx={{ my: 2 }} />
-
-            {/* EIA Grid Mix Layer */}
-            <Box sx={{ mb: 2 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={layers.eiaMix.enabled}
-                    onChange={(e) => {
-                      updateLayer("eiaMix", { enabled: e.target.checked });
-                      if (e.target.checked) {
-                        fetchEiaMix();
-                      }
-                    }}
-                  />
-                }
-                label="Grid Renewable Mix (EIA)"
-              />
-              {layers.eiaMix.enabled && (
-                <Box
-                  sx={{
-                    ml: 4,
-                    mt: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 1.5,
-                  }}
-                >
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Granularity</InputLabel>
-                    <Select
-                      value={layers.eiaMix.granularity}
-                      label="Granularity"
-                      onChange={(e) => {
-                        updateLayer("eiaMix", {
-                          granularity: e.target.value,
-                          loaded: false,
-                        });
-                      }}
-                    >
-                      <MenuItem value="hour">Hourly</MenuItem>
-                      <MenuItem value="day">Daily</MenuItem>
-                    </Select>
-                  </FormControl>
-                  {layers.eiaMix.loading && (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <CircularProgress size={16} />
-                      <Typography variant="body2" color="primary">
-                        Loading...
-                      </Typography>
-                    </Box>
-                  )}
-                  {layers.eiaMix.error && (
-                    <Alert
-                      severity="error"
-                      sx={{ fontSize: "0.75rem", py: 0.5 }}
-                    >
-                      {layers.eiaMix.error}
-                    </Alert>
-                  )}
-                  {layers.eiaMix.data.length > 0 && (
-                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                      {layers.eiaMix.data.map((p) => (
-                        <Chip
-                          key={p.code}
-                          label={`${p.code} ${(p.share * 100).toFixed(0)}%`}
-                          size="small"
-                        />
-                      ))}
-                    </Box>
-                  )}
-                  <Box sx={{ fontSize: "0.65rem", color: "text.secondary" }}>
-                    Circle size & color represent renewable share (green=high,
-                    red=low).
-                  </Box>
-                </Box>
-              )}
-            </Box>
-
-            <Divider sx={{ my: 2 }} />
-
-            {/* Weather Layer */}
-            <Box sx={{ mb: 2 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={layers.weather.enabled}
-                    onChange={(e) => {
-                      updateLayer("weather", { enabled: e.target.checked });
-                      if (e.target.checked) {
-                        fetchWeather();
-                      }
-                    }}
-                  />
-                }
-                label="Weather (OpenWeather)"
-              />
-              {layers.weather.enabled && (
-                <Box
-                  sx={{
-                    ml: 4,
-                    mt: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 1.5,
-                  }}
-                >
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Metric</InputLabel>
-                    <Select
-                      value={layers.weather.variant}
-                      label="Metric"
-                      onChange={(e) => {
-                        updateLayer("weather", { variant: e.target.value });
-                      }}
-                    >
-                      <MenuItem value="temperature">Temperature</MenuItem>
-                      <MenuItem value="wind">Wind Speed</MenuItem>
-                    </Select>
-                  </FormControl>
-                  {layers.weather.loading && (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <CircularProgress size={16} />
-                      <Typography variant="body2" color="primary">
-                        Loading...
-                      </Typography>
-                    </Box>
-                  )}
-                  {layers.weather.error && (
-                    <Alert
-                      severity="error"
-                      sx={{ fontSize: "0.75rem", py: 0.5 }}
-                    >
-                      {layers.weather.error}
-                    </Alert>
-                  )}
-                  {layers.weather.data.length > 0 && (
-                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                      {layers.weather.data.map((w) => (
-                        <Chip
-                          key={w.code}
-                          label={`${w.code} ${w.temperature.toFixed(0)}°C`}
-                          size="small"
-                        />
-                      ))}
-                    </Box>
-                  )}
-                  <Box sx={{ fontSize: "0.65rem", color: "text.secondary" }}>
-                    {layers.weather.variant === "temperature"
-                      ? "Color = temperature (blue=cold, red=hot)."
-                      : "Color = wind intensity (teal=calm, bright=strong)."}
-                  </Box>
-                </Box>
-              )}
-            </Box>
-
-            {MAPBOX_ACCESS_TOKEN === "YOUR_MAPBOX_TOKEN_HERE" && (
-              <Alert severity="warning" sx={{ mt: 2, fontSize: "0.75rem" }}>
-                Add your Mapbox token to NEXT_PUBLIC_MAPBOX_TOKEN
-              </Alert>
-            )}
-          </Paper>
-        </Popover>
-      </Box>
+    <Box sx={{ height: "100%", position: "relative" }}>
+      <LayerControls
+        layers={layers}
+        anchorEl={anchorEl}
+        handleClick={handleClick}
+        handleClose={handleClose}
+        updateLayer={updateLayer}
+        fetchEiaMix={fetchEiaMix}
+        fetchWeather={fetchWeather}
+        setViewState={setViewState}
+      />
 
       <Map
         initialViewState={viewState}
         onMove={(evt) => setViewState(evt.viewState)}
-        mapStyle="mapbox://styles/mapbox/light-v11"
+        mapStyle="mapbox://styles/mapbox/navigation-day-v1"
         projection="mercator"
         mapboxAccessToken={MAPBOX_ACCESS_TOKEN}
         maxZoom={20}
@@ -847,14 +449,24 @@ const PopulationDensityMap = ({
           getTooltip={({ object }) => {
             if (!object) return null;
 
+            // Common style override to remove default deck.gl tooltip border/background
+            const baseTooltipStyle: Partial<CSSStyleDeclaration> = {
+              background: "transparent",
+              border: "none",
+              padding: "0",
+              boxShadow: "none",
+            };
+
             // Property tooltip
             if (object.id && object.name) {
               return {
                 html: `
-                  <div style="background: white; padding: 8px; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); max-width: 250px;">
-                    <strong>${object.name}</strong><br/>
-                    <span style="color: #666;">${object.address}</span><br/>
-                    <span style="background: ${
+                  <div style="background: #ffffff; padding: 10px 12px; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); max-width: 260px; font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                    <strong style="font-size:13px;">${object.name}</strong><br/>
+                    <span style="color: #666; font-size:12px;">${
+                      object.address
+                    }</span><br/>
+                    <span style="display:inline-block; margin-top:6px; background: ${
                       object.energyRating === "A+" ||
                       object.energyRating === "A"
                         ? "#4CAF50"
@@ -862,19 +474,30 @@ const PopulationDensityMap = ({
                           object.energyRating === "B"
                         ? "#FF9800"
                         : "#F44336"
-                    }; 
-                      color: white; padding: 2px 6px; border-radius: 3px; font-size: 12px;">
+                    }; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; letter-spacing: .5px; font-weight:500;">
                       ${object.energyRating}
-                    </span><br/><br/>
-                    <strong>Energy Metrics:</strong><br/>
-                    Consumption: ${object.energyMetrics.consumption} kWh<br/>
-                    Cost: $${object.energyMetrics.cost.toLocaleString()}<br/>
-                    Efficiency: ${object.energyMetrics.efficiency}%<br/><br/>
-                    Floors: ${object.buildingInfo.floors} | Rooms: ${
-                  object.buildingInfo.rooms
-                }
+                    </span>
+                    <div style="margin-top:10px; font-size:12px; line-height:1.4;">
+                      <strong style="display:block; margin-bottom:4px; color:#333;">Energy Metrics</strong>
+                      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px 12px;">
+                        <span style="color:#555;">Consumption:</span><span>${
+                          object.energyMetrics.consumption
+                        } kWh</span>
+                        <span style="color:#555;">Cost:</span><span>$${object.energyMetrics.cost.toLocaleString()}</span>
+                        <span style="color:#555;">Efficiency:</span><span>${
+                          object.energyMetrics.efficiency
+                        }%</span>
+                        <span style="color:#555;">Floors:</span><span>${
+                          object.buildingInfo.floors
+                        }</span>
+                        <span style="color:#555;">Rooms:</span><span>${
+                          object.buildingInfo.rooms
+                        }</span>
+                      </div>
+                    </div>
                   </div>
                 `,
+                style: baseTooltipStyle,
               };
             }
 
@@ -882,21 +505,68 @@ const PopulationDensityMap = ({
             if (object.population) {
               return {
                 html: `
-                  <div style="background: white; padding: 8px; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
-                    <strong>H3 Population Cluster</strong><br/>
-                    Population: ${object.population.toLocaleString()}<br/>
+                  <div style="background: #ffffff; padding: 8px 10px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.12); font-size:12px; font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                    <strong style="font-size:13px; color:#333;">H3 Population Cluster</strong><br/>
+                    <span style="color:#555;">Population:</span> ${object.population.toLocaleString()}<br/>
                     ${
                       object.childCount
-                        ? `Sub-areas: ${object.childCount}<br/>`
+                        ? `<span style=\"color:#555;\">Sub-areas:</span> ${object.childCount}<br/>`
                         : ""
                     }
                     ${
                       object.resolution
-                        ? `Resolution: ${object.resolution}`
+                        ? `<span style=\"color:#555;\">Resolution:</span> ${object.resolution}`
                         : ""
                     }
                   </div>
                 `,
+                style: baseTooltipStyle,
+              };
+            }
+
+            // Weather Station Tooltip - displays detailed weather information on hover
+            // Triggered when user hovers over weather layer circles
+            // Identifies weather objects by presence of temperature property
+            if (object.temperature !== undefined) {
+              return {
+                html: `
+                  <div style="background: #ffffff; padding: 12px 14px; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.14); max-width: 300px; font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                    <div style="border-bottom: 1px solid #f0f0f0; padding-bottom: 6px; margin-bottom: 8px;">
+                      <strong style="color: #1976d2; font-size: 14px;">${
+                        object.name
+                      }</strong><br/>
+                      <span style="color: #666; font-size: 11px;">Balancing Authority: ${
+                        object.code
+                      }</span>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit,minmax(110px,1fr)); gap:8px; font-size:12px;">
+                      <div><span style="color:#666;">Temperature</span><br/><strong style="color:#d32f2f; font-size:13px;">${object.temperature.toFixed(
+                        1
+                      )}°C</strong></div>
+                      ${
+                        object.humidity
+                          ? `<div><span style=\"color:#666;\">Humidity</span><br/><strong style=\"color:#1976d2; font-size:13px;\">${object.humidity}%</strong></div>`
+                          : ""
+                      }
+                      ${
+                        object.windSpeed
+                          ? `<div><span style=\"color:#666;\">Wind Speed</span><br/><strong style=\"color:#388e3c; font-size:13px;\">${object.windSpeed.toFixed(
+                              1
+                            )} m/s</strong></div>`
+                          : ""
+                      }
+                      ${
+                        object.conditions
+                          ? `<div><span style=\"color:#666;\">Conditions</span><br/><strong style=\"color:#f57c00; font-size:13px;\">${object.conditions}</strong></div>`
+                          : ""
+                      }
+                    </div>
+                    <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #f0f0f0; font-size: 10px; color: #999; text-align: center; letter-spacing:.5px;">
+                      OpenWeatherMap API
+                    </div>
+                  </div>
+                `,
+                style: baseTooltipStyle,
               };
             }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Container,
   Grid,
@@ -16,7 +16,6 @@ import {
   Badge,
   styled,
 } from "@mui/material";
-import { Storage } from "@mui/icons-material";
 import { TimeRange } from "@/types/energy";
 import Image from "next/image";
 import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
@@ -26,7 +25,6 @@ import AlertsDropdown from "./AlertsDropdown";
 import CombinedEfficiencyCard from "./CombinedEfficiencyCard";
 import BuildingFloorPlan from "./BuildingFloorPlan";
 import PropertiesMapDrawer from "./PropertiesMapDrawer";
-import SyncStatusModal from "./SyncStatusModal";
 
 const DRAWER_WIDTH = 650;
 
@@ -61,11 +59,6 @@ const EnergyDashboard = () => {
   const { buildings } = useBuildingData();
   const [activeTab, setActiveTab] = useState(0);
   const [propertiesDrawerOpen, setPropertiesDrawerOpen] = useState(false);
-  const [syncModalOpen, setSyncModalOpen] = useState(false);
-  const [schedulerStatus, setSchedulerStatus] = useState<{
-    isRunning: boolean;
-    nextSyncTime?: string;
-  } | null>(null);
 
   const handleTimeRangeChange = (range: TimeRange) => {
     refreshEnergyData(range);
@@ -74,26 +67,6 @@ const EnergyDashboard = () => {
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
   };
-
-  // Check scheduler status on component mount
-  useEffect(() => {
-    const checkSchedulerStatus = async () => {
-      try {
-        const response = await fetch("/api/sync/scheduler");
-        const result = await response.json();
-        if (result.success) {
-          setSchedulerStatus(result.data);
-        }
-      } catch (error) {
-        console.error("Failed to get scheduler status:", error);
-      }
-    };
-
-    checkSchedulerStatus();
-    // Check scheduler status periodically
-    const interval = setInterval(checkSchedulerStatus, 300000); // 5 minutes
-    return () => clearInterval(interval);
-  }, []);
 
   return (
     <Box sx={{ display: "flex" }}>
@@ -117,7 +90,7 @@ const EnergyDashboard = () => {
 
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
                 <ButtonGroup variant="text" sx={{ gap: 0, border: "none" }}>
-                  {(["month", "week", "day", "hour"] as TimeRange[]).map(
+                  {(["month", "week", "day"] as TimeRange[]).map(
                     (range) => (
                       <Button
                         key={range}
@@ -198,20 +171,7 @@ const EnergyDashboard = () => {
                 </Box>
               )}
 
-
-              <AlertsDropdown schedulerStatus={schedulerStatus} />
-
-              <IconButton
-                onClick={() => setSyncModalOpen(true)}
-                sx={{
-                  border: 1,
-                  borderColor: "#DBDBDB",
-                  backgroundColor: "#ffffff",
-                }}
-                title="Data Sync Status"
-              >
-                <Storage />
-              </IconButton>
+              <AlertsDropdown />
 
               <IconButton
                 onClick={() => {}}
@@ -245,31 +205,37 @@ const EnergyDashboard = () => {
           </Box>
 
           <Grid container spacing={3}>
-            <Grid size={{ 
-              xs: 12, 
-              sm: 12, 
-              md: propertiesDrawerOpen ? 12 : 12, 
-              lg: propertiesDrawerOpen ? 12 : 6, 
-              xl: propertiesDrawerOpen ? 6 : 4 
-            }}>
+            <Grid
+              size={{
+                xs: 12,
+                sm: 12,
+                md: propertiesDrawerOpen ? 12 : 12,
+                lg: propertiesDrawerOpen ? 12 : 6,
+                xl: propertiesDrawerOpen ? 6 : 4,
+              }}
+            >
               <ConsumptionCard />
             </Grid>
-            <Grid size={{ 
-              xs: 12, 
-              sm: 12, 
-              md: propertiesDrawerOpen ? 12 : 12, 
-              lg: propertiesDrawerOpen ? 12 : 6, 
-              xl: propertiesDrawerOpen ? 6 : 4 
-            }}>
+            <Grid
+              size={{
+                xs: 12,
+                sm: 12,
+                md: propertiesDrawerOpen ? 12 : 12,
+                lg: propertiesDrawerOpen ? 12 : 6,
+                xl: propertiesDrawerOpen ? 6 : 4,
+              }}
+            >
               <CostSavingChart />
             </Grid>
-            <Grid size={{ 
-              xs: 12, 
-              sm: 12, 
-              md: 12, 
-              lg: propertiesDrawerOpen ? 12 : 12, 
-              xl: propertiesDrawerOpen ? 12 : 8 
-            }}>
+            <Grid
+              size={{
+                xs: 12,
+                sm: 12,
+                md: 12,
+                lg: propertiesDrawerOpen ? 12 : 12,
+                xl: propertiesDrawerOpen ? 12 : 8,
+              }}
+            >
               <CombinedEfficiencyCard />
             </Grid>
           </Grid>
@@ -301,11 +267,6 @@ const EnergyDashboard = () => {
         open={propertiesDrawerOpen}
         onClose={() => setPropertiesDrawerOpen(false)}
         drawerWidth={DRAWER_WIDTH}
-      />
-
-      <SyncStatusModal
-        open={syncModalOpen}
-        onClose={() => setSyncModalOpen(false)}
       />
     </Box>
   );

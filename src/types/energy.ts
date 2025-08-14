@@ -2,7 +2,6 @@ export interface EnergyConsumption {
   id: string;
   timestamp: string;
   energyCost: number;
-  renewableEnergyCost: number;
   totalConsumption: number;
   savings: number;
   period: string;
@@ -65,7 +64,7 @@ export interface BuildingData {
   floors: Floor[];
 }
 
-export type TimeRange = 'hour' | 'day' | 'week' | 'month';
+export type TimeRange = 'day' | 'week' | 'month';
 
 // Types based on actual Mapped.com schema
 export interface Address {

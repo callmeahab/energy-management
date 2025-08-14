@@ -26,19 +26,16 @@ export async function GET(request: NextRequest) {
           b.longitude,
           b.date_created,
           b.date_updated,
-          b.floors_count,
-          b.spaces_count,
           b.sync_timestamp,
-          COUNT(DISTINCT f.id) as actual_floors_count,
-          COUNT(DISTINCT s.id) as actual_spaces_count
+          COUNT(DISTINCT f.id) as floors_count,
+          COUNT(DISTINCT s.id) as spaces_count
         FROM buildings b
         LEFT JOIN floors f ON b.id = f.building_id
         LEFT JOIN spaces s ON b.id = s.building_id
         WHERE b.id = ?
         GROUP BY b.id, b.name, b.description, b.exact_type, b.address_street, 
                  b.address_city, b.address_state, b.address_country, b.address_postal_code,
-                 b.latitude, b.longitude, b.date_created, b.date_updated, 
-                 b.floors_count, b.spaces_count, b.sync_timestamp
+                 b.latitude, b.longitude, b.date_created, b.date_updated, b.sync_timestamp
       `, [buildingId]);
       
       if (!building) {
@@ -57,14 +54,13 @@ export async function GET(request: NextRequest) {
           f.description,
           f.date_created,
           f.date_updated,
-          f.spaces_count,
           f.sync_timestamp,
-          COUNT(s.id) as actual_spaces_count
+          COUNT(s.id) as spaces_count
         FROM floors f
         LEFT JOIN spaces s ON f.id = s.floor_id
         WHERE f.building_id = ?
         GROUP BY f.id, f.building_id, f.name, f.description, f.date_created, 
-                 f.date_updated, f.spaces_count, f.sync_timestamp
+                 f.date_updated, f.sync_timestamp
         ORDER BY f.name
       `, [buildingId]);
       
@@ -109,27 +105,32 @@ export async function GET(request: NextRequest) {
       });
     }
     
-    // Get all buildings with basic stats - simplified query for debugging
+    // Get all buildings with calculated counts
     const buildings = await runQuery(`
       SELECT 
-        id,
-        name,
-        description,
-        exact_type,
-        address_street,
-        address_city,
-        address_state,
-        address_country,
-        address_postal_code,
-        latitude,
-        longitude,
-        date_created,
-        date_updated,
-        floors_count,
-        spaces_count,
-        sync_timestamp
-      FROM buildings
-      ORDER BY name, id
+        b.id,
+        b.name,
+        b.description,
+        b.exact_type,
+        b.address_street,
+        b.address_city,
+        b.address_state,
+        b.address_country,
+        b.address_postal_code,
+        b.latitude,
+        b.longitude,
+        b.date_created,
+        b.date_updated,
+        b.sync_timestamp,
+        COUNT(DISTINCT f.id) as floors_count,
+        COUNT(DISTINCT s.id) as spaces_count
+      FROM buildings b
+      LEFT JOIN floors f ON b.id = f.building_id
+      LEFT JOIN spaces s ON b.id = s.building_id
+      GROUP BY b.id, b.name, b.description, b.exact_type, b.address_street,
+               b.address_city, b.address_state, b.address_country, b.address_postal_code,
+               b.latitude, b.longitude, b.date_created, b.date_updated, b.sync_timestamp
+      ORDER BY b.name, b.id
     `);
     
     // Get energy stats for all buildings if requested

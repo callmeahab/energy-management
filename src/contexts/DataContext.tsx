@@ -43,16 +43,12 @@ export interface LocalEnergyData {
   avg_cost: number;
   total_cost: number;
   avg_efficiency: number;
-  avg_temperature: number;
-  avg_occupancy: number;
   record_count: number;
-  // Optional renewable metrics (enriched by backend if available)
-  renewable_consumption?: number;
-  renewable_cost?: number;
 }
 
 interface EnergyDataSummary {
-  total_records: number;
+  total_records: number; // Now represents unique sensors
+  total_readings?: number; // Total energy readings/data points
   avg_consumption: number;
   total_consumption: number;
   avg_cost: number;
@@ -60,9 +56,6 @@ interface EnergyDataSummary {
   avg_efficiency: number;
   earliest_record: string;
   latest_record: string;
-  // Optional aggregated renewable metrics (if backend provides)
-  total_renewable_consumption?: number;
-  total_renewable_cost?: number;
 }
 
 interface DataContextType {
@@ -82,7 +75,6 @@ interface DataContextType {
 
   // Sync status
   lastSyncTime: string | null;
-  triggerSync: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -109,9 +101,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   const [energyError, setEnergyError] = useState<string | null>(null);
   const [currentTimeRange, setCurrentTimeRange] = useState<TimeRange>("day");
 
-  // Sync state
+  // Periodic refresh timestamp (optional exposure)
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
-  const [lastSyncCheck, setLastSyncCheck] = useState<string | null>(null);
 
   // Handle hydration
   useEffect(() => {
@@ -189,33 +180,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     []
   );
 
-  // Trigger data synchronization
-  const triggerSync = useCallback(async () => {
-    try {
-      const response = await fetch("/api/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ syncType: "full" }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setLastSyncTime(new Date().toISOString());
-        // Refresh data after successful sync
-        await Promise.all([
-          refreshBuildings(),
-          refreshEnergyData(currentTimeRange),
-        ]);
-        console.log("DataProvider: Sync completed, data refreshed");
-      } else {
-        console.error("DataProvider: Sync failed:", result.message);
-      }
-    } catch (error) {
-      console.error("DataProvider: Error triggering sync:", error);
-    }
-  }, [refreshBuildings, refreshEnergyData, currentTimeRange]);
-
   // Initial data loading - only after hydration
   useEffect(() => {
     if (!isHydrated) return;
@@ -230,51 +194,28 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     loadInitialData();
   }, [isHydrated, refreshBuildings, refreshEnergyData]);
 
-  // Monitor sync status and auto-refresh data
+  // Periodic auto-refresh every 5 minutes
   useEffect(() => {
     if (!isHydrated) return;
 
-    const checkForNewSyncs = async () => {
+    const doRefresh = async () => {
       try {
-        const response = await fetch("/api/sync");
-        const result = await response.json();
-        if (result.success && result.data.lastSync) {
-          const newSyncTime = result.data.lastSync.last_sync_timestamp;
-
-          // If this is a new sync (different from last known sync)
-          if (newSyncTime !== lastSyncCheck) {
-            console.log("DataProvider: New sync detected, refreshing data...");
-            setLastSyncTime(newSyncTime);
-            setLastSyncCheck(newSyncTime);
-
-            // Auto-refresh both buildings and energy data
-            await Promise.all([
-              refreshBuildings(),
-              refreshEnergyData(currentTimeRange),
-            ]);
-
-            console.log("DataProvider: Data refreshed after sync completion");
-          }
-        }
-      } catch (error) {
-        console.error("DataProvider: Error checking sync status:", error);
+        await Promise.all([
+          refreshBuildings(),
+          refreshEnergyData(currentTimeRange),
+        ]);
+        setLastSyncTime(new Date().toISOString());
+        console.log("DataProvider: Periodic refresh completed");
+      } catch (e) {
+        console.error("DataProvider: Periodic refresh failed", e);
       }
     };
 
-    // Initial sync status check
-    checkForNewSyncs();
-
-    // Poll for sync changes every 2 minutes
-    const syncCheckInterval = setInterval(checkForNewSyncs, 120000); // 2 minutes
-
-    return () => clearInterval(syncCheckInterval);
-  }, [
-    isHydrated,
-    lastSyncCheck,
-    refreshBuildings,
-    refreshEnergyData,
-    currentTimeRange,
-  ]);
+    // Initial kickoff
+    doRefresh();
+    const interval = setInterval(doRefresh, 5 * 60 * 1000); // 5 minutes
+    return () => clearInterval(interval);
+  }, [isHydrated, refreshBuildings, refreshEnergyData, currentTimeRange]);
 
   const contextValue: DataContextType = {
     buildings,
@@ -290,7 +231,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     refreshEnergyData,
 
     lastSyncTime,
-    triggerSync,
   };
 
   // Don't render children until hydration is complete to prevent hydration mismatch
@@ -338,7 +278,6 @@ export const useEnergyData = () => {
   };
 };
 
-export const useSyncControl = () => {
-  const { lastSyncTime, triggerSync } = useDataContext();
-  return { lastSyncTime, triggerSync };
-};
+export const useSyncControl = () => ({
+  lastSyncTime: useDataContext().lastSyncTime,
+});

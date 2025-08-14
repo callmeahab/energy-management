@@ -6,10 +6,6 @@ import {
   formatChartLabel,
 } from "@/lib/time-range-utils";
 import { TimeRange } from "@/types/energy";
-import {
-  fetchRenewableAttribution,
-  RenewableAttributionRecord,
-} from "@/lib/renewable-service";
 
 interface RawEnergyRow {
   period?: string;
@@ -19,8 +15,6 @@ interface RawEnergyRow {
   avg_cost?: number;
   total_cost?: number;
   avg_efficiency?: number;
-  avg_temperature?: number;
-  avg_occupancy?: number;
   record_count?: number;
   building_id?: string;
   building_name?: string;
@@ -29,8 +23,6 @@ interface RawEnergyRow {
   efficiency_score?: number; // present in raw table when not aggregated
   consumption_kwh?: number;
   cost_usd?: number;
-  renewable_consumption?: number;
-  renewable_cost?: number;
   label?: string;
 }
 
@@ -45,7 +37,6 @@ export async function GET(request: NextRequest) {
 
     // Map API time range to our TimeRange type
     const timeRangeMap: Record<string, TimeRange> = {
-      "1h": "hour",
       "24h": "day",
       "7d": "week",
       "30d": "month",
@@ -79,32 +70,62 @@ export async function GET(request: NextRequest) {
 
     if (
       usedAggregation === "minute" ||
+      usedAggregation === "30minute" ||
       usedAggregation === "hourly" ||
       usedAggregation === "daily" ||
       usedAggregation === "weekly"
     ) {
-      sql = `
-        SELECT 
-          strftime('${config.sqlFormat}', e.timestamp) as period,
-          AVG(e.consumption_kwh) as avg_consumption,
-          SUM(e.consumption_kwh) as total_consumption,
-          AVG(e.cost_usd) as avg_cost,
-          SUM(e.cost_usd) as total_cost,
-          AVG(e.efficiency_score) as avg_efficiency,
-          AVG(e.temperature_celsius) as avg_temperature,
-          AVG(e.occupancy_count) as avg_occupancy,
-          COUNT(*) as record_count
-        FROM energy_usage e
-        ${whereClause}
-        GROUP BY strftime('${config.sqlFormat}', e.timestamp)
-        ORDER BY period ASC
-        LIMIT 100
-      `;
+      // Special handling for 30-minute intervals
+      if (usedAggregation === "30minute") {
+        sql = `
+          SELECT 
+            strftime('%Y-%m-%d %H:', e.timestamp) || 
+            CASE WHEN CAST(strftime('%M', e.timestamp) AS INTEGER) < 30 THEN '00:00' ELSE '30:00' END as period,
+            AVG(e.consumption_kwh) as avg_consumption,
+            AVG(e.consumption_kwh) as total_consumption,
+            AVG(e.cost_usd) as avg_cost,
+            AVG(e.cost_usd) as total_cost,
+            AVG(e.efficiency_score) as avg_efficiency,
+            COUNT(*) as record_count
+          FROM energy_usage e
+          ${whereClause}
+          GROUP BY strftime('%Y-%m-%d %H:', e.timestamp) || 
+                   CASE WHEN CAST(strftime('%M', e.timestamp) AS INTEGER) < 30 THEN '00:00' ELSE '30:00' END
+          ORDER BY period ASC
+          LIMIT 100
+        `;
+      } else {
+        sql = `
+          SELECT 
+            strftime('${config.sqlFormat}', e.timestamp) as period,
+            AVG(e.consumption_kwh) as avg_consumption,
+            AVG(e.consumption_kwh) as total_consumption,
+            AVG(e.cost_usd) as avg_cost,
+            AVG(e.cost_usd) as total_cost,
+            AVG(e.efficiency_score) as avg_efficiency,
+            COUNT(*) as record_count
+          FROM energy_usage e
+          ${whereClause}
+          GROUP BY strftime('${config.sqlFormat}', e.timestamp)
+          ORDER BY period ASC
+          LIMIT 100
+        `;
+      }
     } else {
       // Raw data
       sql = `
         SELECT 
-          e.*,
+          e.id,
+          e.building_id,
+          e.floor_id,
+          e.space_id,
+          e.timestamp,
+          e.consumption_kwh,
+          e.cost_usd,
+          e.efficiency_score,
+          e.usage_type,
+          e.source,
+          e.sync_timestamp,
           b.name as building_name,
           f.name as floor_name,
           s.name as space_name
@@ -121,7 +142,7 @@ export async function GET(request: NextRequest) {
     const rawEnergyData = await runQuery(sql, []);
 
     // Add formatted labels to the energy data
-    let energyData: RawEnergyRow[] = (rawEnergyData as RawEnergyRow[]).map(
+    const energyData: RawEnergyRow[] = (rawEnergyData as RawEnergyRow[]).map(
       (item, index) => ({
         ...item,
         label: formatChartLabel(
@@ -132,87 +153,32 @@ export async function GET(request: NextRequest) {
       })
     );
 
-    // Attempt to enrich with renewable metrics from external API when we have aggregated periods
-    if (energyData.length > 0 && energyData[0].period) {
-      const attribution = await fetchRenewableAttribution({
-        periodStart: energyData[0].period
-          ? new Date(energyData[0].period).toISOString()
-          : startTime.toISOString(),
-        periodEnd: now.toISOString(),
-        granularity: config.aggregation === "hourly" ? "hour" : "day",
-        buildingId: buildingId || undefined,
-      });
-      if (attribution) {
-        const map = new Map<
-          string,
-          {
-            renewable_consumption?: number;
-            renewable_cost?: number;
-            renewable_share?: number;
-          }
-        >();
-        attribution.records.forEach(
-          (r: RenewableAttributionRecord & { renewable_share?: number }) =>
-            map.set(r.period, {
-              renewable_consumption: r.renewable_consumption,
-              renewable_cost: r.renewable_cost,
-              renewable_share: r.renewable_share,
-            })
-        );
-        energyData = energyData.map((row) => {
-          const key = row.period || "";
-          const match = key ? map.get(key) : undefined;
-          if (!match) return row;
-          // If renewable_consumption is zero but we have a share, compute via share * total_consumption
-          let { renewable_consumption, renewable_cost } = match;
-          if (
-            (renewable_consumption === 0 ||
-              renewable_consumption === undefined) &&
-            match.renewable_share !== undefined
-          ) {
-            const totalCons = row.total_consumption ?? row.avg_consumption ?? 0;
-            renewable_consumption = totalCons * match.renewable_share;
-            const totalCost = row.total_cost ?? row.avg_cost ?? 0;
-            renewable_cost = totalCost * match.renewable_share;
-          }
-          return { ...row, renewable_consumption, renewable_cost };
-        });
-      }
-    }
-
-    // Get summary statistics
+    // Get summary statistics using aggregated period data
     const summarySQL = `
+      WITH period_totals AS (
+        SELECT 
+          strftime('${config.sqlFormat}', e.timestamp) as period,
+          AVG(e.consumption_kwh) as period_consumption,
+          AVG(e.cost_usd) as period_cost,
+          AVG(e.efficiency_score) as period_efficiency
+        FROM energy_usage e
+        ${whereClause}
+        GROUP BY strftime('${config.sqlFormat}', e.timestamp)
+      )
       SELECT 
+        COUNT(*) as total_periods,
         COUNT(*) as total_records,
-        AVG(consumption_kwh) as avg_consumption,
-        SUM(consumption_kwh) as total_consumption,
-        AVG(cost_usd) as avg_cost,
-        SUM(cost_usd) as total_cost,
-        AVG(efficiency_score) as avg_efficiency,
-        strftime('%Y-%m-%d %H:%M:%S', MIN(timestamp)) as earliest_record,
-        strftime('%Y-%m-%d %H:%M:%S', MAX(timestamp)) as latest_record
-      FROM energy_usage e
-      ${whereClause}
+        AVG(period_consumption) as avg_consumption,
+        SUM(period_consumption) as total_consumption,
+        AVG(period_cost) as avg_cost,
+        SUM(period_cost) as total_cost,
+        AVG(period_efficiency) as avg_efficiency,
+        (SELECT strftime('%Y-%m-%d %H:%M:%S', MIN(timestamp)) FROM energy_usage e ${whereClause}) as earliest_record,
+        (SELECT strftime('%Y-%m-%d %H:%M:%S', MAX(timestamp)) FROM energy_usage e ${whereClause}) as latest_record
+      FROM period_totals
     `;
 
-    let summary = await runQuerySingle(summarySQL, []);
-
-    // Aggregate renewable metrics if present in enriched records
-    if (energyData.some((r) => r.renewable_consumption !== undefined)) {
-      const total_renewable_consumption = energyData.reduce(
-        (acc: number, r) => acc + (r.renewable_consumption || 0),
-        0
-      );
-      const total_renewable_cost = energyData.reduce(
-        (acc: number, r) => acc + (r.renewable_cost || 0),
-        0
-      );
-      summary = {
-        ...summary,
-        total_renewable_consumption,
-        total_renewable_cost,
-      };
-    }
+    const summary = await runQuerySingle(summarySQL, []);
 
     // Convert any BigInt values to regular numbers to avoid JSON serialization issues
     const sanitizeData = <T>(obj: T): T => {

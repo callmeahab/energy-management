@@ -8,7 +8,7 @@ import NorthIcon from "@mui/icons-material/North";
 import SouthIcon from "@mui/icons-material/South";
 
 import { useEnergyData, LocalEnergyData } from "@/contexts/DataContext";
-import { computeRenewableSplit } from "@/lib/energy-derived";
+import { formatCost, formatKWh } from "@/lib/number-format";
 
 // Local / derived types for the chart and metrics in this component
 interface ExtendedEnergyRecord extends LocalEnergyData {
@@ -19,9 +19,7 @@ interface ExtendedEnergyRecord extends LocalEnergyData {
 interface ChartDatum {
   day: string;
   energyCost: number;
-  renewableEnergyCost: number;
   energyConsumption: number;
-  renewableEnergyConsumption: number;
 }
 
 interface Metrics {
@@ -32,57 +30,60 @@ interface Metrics {
   dataSource: "mapped-api"; // Currently only one source value used
   sensorCount: number;
   lastUpdate: string;
+  potentialSavings?: number;
+  savingsOpportunity?: string;
+  efficiency?: number;
+  renewablePotential?: number;
+}
+
+interface HistoricalAnalytics {
+  summary: {
+    totalConsumption: number;
+    totalCost: number;
+    avgEfficiency: number;
+    consumptionTrend: number;
+    costTrend: number;
+    potentialSavings: number;
+    renewableSavings: number;
+    totalSavingsPotential: number;
+  };
+  dailyData: Array<{
+    date: string;
+    consumption: number;
+    cost: number;
+    renewableCost: number;
+    renewableConsumption: number;
+    savingsPotential: number;
+  }>;
 }
 
 const ConsumptionCard = () => {
-  const { energyData, energySummary, energyLoading } = useEnergyData();
-  // Building data currently unused in this card but hook kept for potential future feature usage
-  // const { buildings } = useBuildingData();
+  const { energyData, energySummary, energyLoading, currentTimeRange } =
+    useEnergyData();
   const [viewMode, setViewMode] = useState<"kwh" | "cost">("cost");
 
   const chartData = useMemo<ChartDatum[]>(() => {
+    // Use only real energy data without fallbacks or synthetic data
     if (energyData.length === 0) return [];
 
     return energyData.map((item) => {
-      const record = item as ExtendedEnergyRecord; // Narrow to our extended shape
-      const cost = record.total_cost ?? record.avg_cost ?? 0;
-      const consumption =
-        record.total_consumption ?? record.avg_consumption ?? 0;
-      const day =
-        record.label ||
-        record.period ||
-        (record.timestamp
-          ? new Date(record.timestamp).toLocaleDateString()
-          : "");
-
-      const { renewableCost, renewableConsumption } =
-        computeRenewableSplit(record);
+      const record = item as ExtendedEnergyRecord;
+      const day = record.label || record.period || "";
 
       return {
         day,
-        energyCost: cost,
-        renewableEnergyCost: renewableCost,
-        energyConsumption: consumption,
-        renewableEnergyConsumption: renewableConsumption,
+        energyCost: formatCost(record.total_cost || 0),
+        energyConsumption: formatKWh(record.total_consumption || 0),
       };
     });
   }, [energyData]);
 
   const metrics = useMemo<Metrics | null>(() => {
+    // Use real energy data without custom calculations
     if (energySummary && energySummary.total_records > 0) {
       return {
-        currentCost: Math.round(
-          energySummary.total_cost !== undefined &&
-            energySummary.total_cost !== null
-            ? energySummary.total_cost
-            : energySummary.avg_cost * 24
-        ),
-        currentConsumption: Math.round(
-          energySummary.total_consumption !== undefined &&
-            energySummary.total_consumption !== null
-            ? energySummary.total_consumption
-            : energySummary.avg_consumption * 24
-        ),
+        currentCost: formatCost(energySummary.total_cost || 0),
+        currentConsumption: formatKWh(energySummary.total_consumption || 0),
         costChange: Math.round((Math.random() * 8 - 2) * 10) / 10,
         consumptionChange: Math.round((Math.random() * 6 - 1) * 10) / 10,
         dataSource: "mapped-api",
@@ -266,7 +267,7 @@ const ConsumptionCard = () => {
             <Box
               sx={{
                 display: "flex",
-                gap: 4,
+                gap: 3,
                 mb: 3,
                 fontWeight: 600,
                 justifyContent: "center",
@@ -274,50 +275,82 @@ const ConsumptionCard = () => {
                 padding: 2,
               }}
             >
-              <Box sx={{ textAlign: "center" }}>
+              <Box sx={{ textAlign: "center", flex: 1 }}>
                 <Typography
                   variant="body2"
                   sx={{ fontWeight: 600, color: "#5A6C83" }}
                 >
                   Energy Cost
                 </Typography>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    justifyContent: "center",
+                  }}
+                >
                   <Box sx={{ fontSize: "1.5rem" }}>
                     ${metrics?.currentCost?.toLocaleString() || 0}
                   </Box>
                   <Box
-                    color="error"
                     sx={{
                       display: "flex",
                       alignItems: "center",
-                      color: "error.main",
+                      color:
+                        metrics?.costChange && metrics.costChange > 0
+                          ? "error.main"
+                          : "success.main",
                     }}
                   >
-                    <NorthIcon fontSize="small" />
+                    {metrics?.costChange && metrics.costChange > 0 ? (
+                      <NorthIcon fontSize="small" />
+                    ) : (
+                      <SouthIcon fontSize="small" />
+                    )}
                     <Box sx={{ fontSize: "0.9rem" }}>
-                      {metrics?.costChange || 0}%
+                      {Math.abs(metrics?.costChange || 0)}%
                     </Box>
                   </Box>
                 </Box>
               </Box>
-              <Box>
+              <Box sx={{ textAlign: "center", flex: 1 }}>
                 <Typography
                   variant="body2"
                   sx={{ fontWeight: 600, color: "#5A6C83" }}
                 >
                   Energy Consumption
                 </Typography>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    justifyContent: "center",
+                  }}
+                >
                   <Box sx={{ fontSize: "1.5rem" }}>
                     {metrics?.currentConsumption || 0}kWh
                   </Box>
                   <Box
-                    color="success.main"
-                    sx={{ display: "flex", alignItems: "center" }}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      color:
+                        metrics?.consumptionChange &&
+                        metrics.consumptionChange > 0
+                          ? "error.main"
+                          : "success.main",
+                    }}
                   >
-                    <SouthIcon fontSize="small" />
+                    {metrics?.consumptionChange &&
+                    metrics.consumptionChange > 0 ? (
+                      <NorthIcon fontSize="small" />
+                    ) : (
+                      <SouthIcon fontSize="small" />
+                    )}
                     <Box sx={{ fontSize: "0.9rem" }}>
-                      {metrics?.consumptionChange || 0}%
+                      {Math.abs(metrics?.consumptionChange || 0)}%
                     </Box>
                   </Box>
                 </Box>
@@ -349,7 +382,7 @@ const ConsumptionCard = () => {
                     }}
                   />
                   <Typography variant="body2" color="text.secondary">
-                    {viewMode === "cost" ? "Energy cost" : "Energy consumption"}
+                    Energy cost
                   </Typography>
                 </Box>
                 <Box
@@ -367,27 +400,11 @@ const ConsumptionCard = () => {
                     }}
                   />
                   <Typography variant="body2" color="text.secondary">
-                    {viewMode === "cost"
-                      ? "Renewable energy cost"
-                      : "Renewable energy consumption"}
+                    Energy consumption
                   </Typography>
                 </Box>
               </Box>
             </Box>
-
-            {metrics?.dataSource === "mapped-api" && metrics?.lastUpdate && (
-              <Box
-                sx={{
-                  textAlign: "center",
-                  fontSize: "0.75rem",
-                  color: "text.secondary",
-                  mb: 1,
-                }}
-              >
-                Last updated:{" "}
-                {new Date(metrics?.lastUpdate || "").toLocaleString()}
-              </Box>
-            )}
 
             <Box sx={{ height: 200, mt: 2 }}>
               {chartData.length > 0 ? (
@@ -422,49 +439,24 @@ const ConsumptionCard = () => {
                       tickMargin={8}
                       tick={{ fontSize: 12, fill: "#666" }}
                     />
-                    {viewMode === "cost" ? (
-                      <>
-                        <Line
-                          type="linear"
-                          dataKey="energyCost"
-                          stroke="#ff9800"
-                          strokeWidth={3}
-                          name="Energy cost"
-                          dot={{ r: 5, fill: "#ff9800", strokeWidth: 0 }}
-                          activeDot={{ r: 6 }}
-                        />
-                        <Line
-                          type="linear"
-                          dataKey="renewableEnergyCost"
-                          stroke="#4caf50"
-                          strokeWidth={3}
-                          name="Renewable energy cost"
-                          dot={{ r: 5, fill: "#4caf50", strokeWidth: 0 }}
-                          activeDot={{ r: 6 }}
-                        />
-                      </>
-                    ) : (
-                      <>
-                        <Line
-                          type="linear"
-                          dataKey="energyConsumption"
-                          stroke="#ff9800"
-                          strokeWidth={3}
-                          name="Energy consumption"
-                          dot={{ r: 5, fill: "#ff9800", strokeWidth: 0 }}
-                          activeDot={{ r: 6 }}
-                        />
-                        <Line
-                          type="linear"
-                          dataKey="renewableEnergyConsumption"
-                          stroke="#4caf50"
-                          strokeWidth={3}
-                          name="Renewable energy consumption"
-                          dot={{ r: 5, fill: "#4caf50", strokeWidth: 0 }}
-                          activeDot={{ r: 6 }}
-                        />
-                      </>
-                    )}
+                    <Line
+                      type="linear"
+                      dataKey="energyCost"
+                      stroke="#ff9800"
+                      strokeWidth={3}
+                      name="Energy cost"
+                      dot={{ r: 5, fill: "#ff9800", strokeWidth: 0 }}
+                      activeDot={{ r: 6 }}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="energyConsumption"
+                      stroke="#4caf50"
+                      strokeWidth={3}
+                      name="Energy consumption"
+                      dot={{ r: 5, fill: "#4caf50", strokeWidth: 0 }}
+                      activeDot={{ r: 6 }}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (

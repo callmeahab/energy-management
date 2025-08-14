@@ -52,120 +52,80 @@ export const initializeDatabase = async (): Promise<sqlite3.Database> => {
 };
 
 const createTables = async (database: sqlite3.Database): Promise<void> => {
-  // Combine DDL into single exec so we can await completion reliably
-  const ddl = `
-    CREATE TABLE IF NOT EXISTS buildings (
-      id TEXT PRIMARY KEY,
-      name TEXT,
-      description TEXT,
-      exact_type TEXT,
-      address_street TEXT,
-      address_city TEXT,
-      address_state TEXT,
-      address_country TEXT,
-      address_postal_code TEXT,
-      latitude REAL,
-      longitude REAL,
-      date_created TEXT,
-      date_updated TEXT,
-      floors_count INTEGER DEFAULT 0,
-      spaces_count INTEGER DEFAULT 0,
-      sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS floors (
-      id TEXT PRIMARY KEY,
-      building_id TEXT,
-      name TEXT,
-      description TEXT,
-      date_created TEXT,
-      date_updated TEXT,
-      spaces_count INTEGER DEFAULT 0,
-      sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS spaces (
-      id TEXT PRIMARY KEY,
-      floor_id TEXT,
-      building_id TEXT,
-      name TEXT,
-      description TEXT,
-      exact_type TEXT,
-      date_created TEXT,
-      date_updated TEXT,
-      sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS energy_usage (
-      id TEXT PRIMARY KEY,
-      building_id TEXT,
-      floor_id TEXT,
-      space_id TEXT,
-      timestamp TEXT,
-      consumption_kwh REAL,
-      cost_usd REAL,
-      efficiency_score REAL,
-      temperature_celsius REAL,
-      occupancy_count INTEGER,
-      usage_type TEXT,
-      source TEXT DEFAULT 'calculated',
-      sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS sync_status (
-      id INTEGER,
-      last_sync_timestamp TEXT,
-      sync_type TEXT,
-      status TEXT,
-      records_synced INTEGER DEFAULT 0,
-      errors_count INTEGER DEFAULT 0,
-      error_message TEXT,
-      duration_ms INTEGER,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS occupancy_data (
-      id TEXT PRIMARY KEY,
-      building_id TEXT,
-      floor_id TEXT,
-      space_id TEXT,
-      timestamp TEXT,
-      occupancy_count INTEGER,
-      occupancy_percentage REAL,
-      peak_hours TEXT,
-      sensor_type TEXT,
-      source TEXT DEFAULT 'mapped_api',
-      sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS appliance_efficiency (
-      id TEXT PRIMARY KEY,
-      building_id TEXT,
-      floor_id TEXT,
-      space_id TEXT,
-      appliance_name TEXT,
-      appliance_type TEXT,
-      timestamp TEXT,
-      energy_consumption REAL,
-      efficiency_score REAL,
-      operational_status TEXT,
-      issues_detected TEXT,
-      recommendations TEXT,
-      source TEXT DEFAULT 'mapped_api',
-      sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_buildings_sync ON buildings(sync_timestamp);
-    CREATE INDEX IF NOT EXISTS idx_floors_building ON floors(building_id);
-    CREATE INDEX IF NOT EXISTS idx_spaces_floor ON spaces(floor_id);
-    CREATE INDEX IF NOT EXISTS idx_spaces_building ON spaces(building_id);
-    CREATE INDEX IF NOT EXISTS idx_energy_building ON energy_usage(building_id);
-    CREATE INDEX IF NOT EXISTS idx_energy_timestamp ON energy_usage(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_energy_building_time ON energy_usage(building_id, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_occupancy_building ON occupancy_data(building_id, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_appliance_building ON appliance_efficiency(building_id, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_sync_status_type ON sync_status(sync_type, last_sync_timestamp);
-  `;
-  await new Promise<void>((resolve, reject) => {
-    database.exec(ddl, (err) => {
-      if (err) return reject(err);
-      resolve();
-    });
-  });
+  // Use common schema loader
+  const { executeSchemaNode } = await import("../../schema/schema-loader.js");
+
+  try {
+    await executeSchemaNode(database);
+    await ensureEnergyUsageUniqueIndex(database);
+  } catch (error) {
+    console.error("Failed to execute common schema:", error);
+    throw error;
+  }
 };
+
+/**
+ * Attempt to create uniqueness constraint for hourly energy records.
+ * If duplicates exist (legacy data), deduplicate then retry. Fails silently after second attempt.
+ */
+async function ensureEnergyUsageUniqueIndex(database: sqlite3.Database) {
+  const createIndex = () =>
+    new Promise<void>((resolve, reject) => {
+      database.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ux_energy_usage_unique_hour
+         ON energy_usage (
+           building_id,
+           COALESCE(floor_id,'*'),
+           COALESCE(space_id,'*'),
+           timestamp,
+           usage_type,
+           source
+         );`,
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+
+  try {
+    await createIndex();
+  } catch (err: unknown) {
+    interface SqliteErr {
+      code?: string;
+    }
+    const code = (err as SqliteErr)?.code;
+    if (code === "SQLITE_CONSTRAINT") {
+      console.warn(
+        "Duplicate energy_usage rows detected; performing deduplication before creating unique index"
+      );
+      // Deduplicate keeping the earliest rowid for each uniqueness grouping (COALESCE semantics replicated via IFNULL)
+      await new Promise<void>((resolve, reject) => {
+        database.exec(
+          `DELETE FROM energy_usage
+           WHERE rowid NOT IN (
+             SELECT MIN(rowid) FROM energy_usage
+             GROUP BY building_id, IFNULL(floor_id,'*'), IFNULL(space_id,'*'), timestamp, usage_type, source
+           );`,
+          (err) => (err ? reject(err) : resolve())
+        );
+      });
+      try {
+        await createIndex();
+        console.log(
+          "Unique index ux_energy_usage_unique_hour created after deduplication"
+        );
+      } catch (finalErr) {
+        console.warn(
+          "Failed to create ux_energy_usage_unique_hour after dedup; continuing without enforced uniqueness:",
+          finalErr
+        );
+      }
+    } else {
+      console.warn(
+        "Unexpected error creating ux_energy_usage_unique_hour; continuing without enforced uniqueness:",
+        err
+      );
+    }
+  }
+}
 
 export const getDatabase = (): sqlite3.Database => {
   if (!db)

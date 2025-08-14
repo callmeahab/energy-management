@@ -1,26 +1,18 @@
 "use client";
 
 import React, { useState } from "react";
-import {
-  Drawer,
-  Box,
-  Typography,
-  IconButton,
-  Chip,
-  List,
-  ListItem,
-  ListItemText,
-  Divider,
-} from "@mui/material";
-import { Close, LocationOn } from "@mui/icons-material";
+import { Drawer, Box, IconButton } from "@mui/material";
+import { Close, List as ListIcon } from "@mui/icons-material";
 import { useQuery } from "@apollo/client";
 import PopulationDensityMap from "./PopulationDensityMap";
 import { GET_BUILDINGS, GET_SITES } from "@/lib/queries";
-import { Property, Building, Site } from "@/types/energy";
+import { Property, Site } from "@/types/energy";
 import {
   fetchLocalBuildings,
   transformBuildingToProperty,
 } from "@/lib/queries-local";
+import { convertBuildingToProperty } from "@/lib/property-utils";
+import PropertyListMenu from "@/components/PropertyListMenu";
 
 interface PropertiesMapDrawerProps {
   open: boolean;
@@ -39,6 +31,13 @@ const PropertiesMapDrawer = ({
   const [properties, setProperties] = useState<Property[]>([]);
   const [dataSource, setDataSource] = useState("demo");
   const [loading, setLoading] = useState(false);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const menuOpen = Boolean(menuAnchorEl);
+
+  const handleMenuOpen = (e: React.MouseEvent<HTMLElement>) => {
+    setMenuAnchorEl(e.currentTarget);
+  };
+  const handleMenuClose = () => setMenuAnchorEl(null);
 
   // Fallback API queries
   const { data: buildingsData } = useQuery(GET_BUILDINGS, {
@@ -83,66 +82,6 @@ const PropertiesMapDrawer = ({
     loadLocalBuildings().finally(() => setLoading(false));
   }, [open]);
 
-  // Convert Mapped.com API data to our Property format for display
-  const convertBuildingToProperty = (building: Building): Property => {
-    const address = building.address;
-    const addressString =
-      [address?.street, address?.city, address?.state, address?.country]
-        .filter(Boolean)
-        .join(", ") || "Unknown Address";
-
-    // Calculate actual metrics from building data
-    const floorCount = building.floors?.length || 0;
-    const roomCount =
-      building.floors?.reduce(
-        (sum, floor) => sum + (floor.spaces?.length || 0),
-        0
-      ) || 0;
-
-    // Generate more realistic mock data based on building size
-    const basePower = Math.max(100, roomCount * 25 + floorCount * 50);
-    const efficiency = Math.max(
-      60,
-      Math.min(95, 85 + (floorCount > 5 ? 5 : 0) - (roomCount > 50 ? 10 : 0))
-    );
-
-    return {
-      id: building.id,
-      name:
-        building.name ||
-        building.description ||
-        `Building ${building.id.substring(0, 8)}`,
-      address: addressString,
-      type: building.exactType || "Building",
-      energyRating:
-        efficiency > 90
-          ? "A+"
-          : efficiency > 80
-          ? "A"
-          : efficiency > 70
-          ? "B+"
-          : "B",
-      coordinates: {
-        lat: building.geolocation?.latitude || 40.7128,
-        lng: building.geolocation?.longitude || -74.006,
-      },
-      energyMetrics: {
-        consumption: Math.floor(basePower * (1 + Math.random() * 0.3)),
-        cost: Math.floor(basePower * 4 * (1 + Math.random() * 0.2)),
-        efficiency: Math.floor(efficiency),
-        lastUpdated: building.dateUpdated || new Date().toISOString(),
-      },
-      buildingInfo: {
-        floors: floorCount,
-        rooms: roomCount,
-        area: Math.floor(
-          (roomCount * 200 + floorCount * 1000) * (1 + Math.random() * 0.4)
-        ),
-        yearBuilt: 2015 + Math.floor(Math.random() * 8), // 2015-2023
-      },
-    };
-  };
-
   // Fallback to API data if local data failed
   React.useEffect(() => {
     if (dataSource === "demo" && !loading) {
@@ -177,21 +116,7 @@ const PropertiesMapDrawer = ({
 
   // Note: loading state is derived locally; GraphQL loading/error are ignored in this component
 
-  const getRatingColor = (rating: string) => {
-    switch (rating) {
-      case "A+":
-      case "A":
-        return "success";
-      case "B+":
-      case "B":
-        return "warning";
-      case "C+":
-      case "C":
-        return "error";
-      default:
-        return "default";
-    }
-  };
+  // rating color handled by PropertyListMenu via utility
 
   return (
     <Drawer
@@ -207,125 +132,59 @@ const PropertiesMapDrawer = ({
         },
       }}
     >
-      <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-        <Box
-          sx={{
-            p: 2,
-            borderBottom: 1,
-            borderColor: "divider",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <Typography variant="h5" fontWeight="bold">
-            Properties
-          </Typography>
-          <IconButton onClick={onClose}>
-            <Close />
-          </IconButton>
-        </Box>
-
-        <Box sx={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          <Box sx={{ height: "50%", position: "relative" }}>
-            <PopulationDensityMap
-              properties={properties}
-              selectedProperty={selectedProperty}
-              onPropertySelect={setSelectedProperty}
-            />
-          </Box>
-
-          <Box sx={{ flex: 1, overflow: "auto" }}>
-            <Box
+      <Box sx={{ height: "100%", position: "relative" }}>
+        <Box sx={{ position: "absolute", top: 16, right: 16, zIndex: 2 }}>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <IconButton
               sx={{
-                p: 2,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
+                bgcolor: "white",
+                color: "text.primary",
+                boxShadow: 2,
+                border: 1,
+                borderColor: "grey.300",
+                width: 40,
+                height: 40,
+                "&:hover": { bgcolor: "grey.100" },
               }}
+              onClick={onClose}
+              aria-label="close drawer"
             >
-              <Typography variant="h6">Property List</Typography>
-              <Chip
-                label={
-                  dataSource === "local"
-                    ? `Local Database (${properties.length})`
-                    : dataSource === "api-buildings"
-                    ? `Live API (${properties.length} buildings)`
-                    : dataSource === "api-sites"
-                    ? `Live API (${properties.length} from sites)`
-                    : "Demo Data"
-                }
-                size="small"
-                color={
-                  dataSource === "local"
-                    ? "primary"
-                    : dataSource.startsWith("api-")
-                    ? "success"
-                    : "default"
-                }
-                variant="outlined"
-              />
-            </Box>
-            <List>
-              {properties.map((property, index) => (
-                <React.Fragment key={property.id}>
-                  <ListItem
-                    sx={{
-                      cursor: "pointer",
-                      "&:hover": { backgroundColor: "action.hover" },
-                    }}
-                    onClick={() => {
-                      setSelectedProperty(property);
-                    }}
-                  >
-                    <Box sx={{ mr: 2 }}>
-                      <LocationOn color="primary" />
-                    </Box>
-                    <ListItemText
-                      primary={
-                        <Box
-                          sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                        >
-                          <Typography variant="subtitle2" fontWeight="medium">
-                            {property.name}
-                          </Typography>
-                          <Chip
-                            label={property.energyRating}
-                            size="small"
-                            color={
-                              getRatingColor(property.energyRating) as
-                                | "success"
-                                | "warning"
-                                | "error"
-                                | "default"
-                            }
-                          />
-                        </Box>
-                      }
-                      secondary={
-                        <React.Fragment>
-                          <Typography variant="caption" display="block">
-                            {property.address}
-                          </Typography>
-                          <Typography
-                            variant="caption"
-                            component="span"
-                            sx={{ display: "block", mt: 0.5 }}
-                          >
-                            {property.energyMetrics.consumption} kWh • $
-                            {property.energyMetrics.cost.toLocaleString()} •{" "}
-                            {property.energyMetrics.efficiency}% efficient
-                          </Typography>
-                        </React.Fragment>
-                      }
-                    />
-                  </ListItem>
-                  {index < properties.length - 1 && <Divider />}
-                </React.Fragment>
-              ))}
-            </List>
+              <Close />
+            </IconButton>
+            <IconButton
+              sx={{
+                bgcolor: "white",
+                color: "text.primary",
+                boxShadow: 2,
+                border: 1,
+                borderColor: "grey.300",
+                width: 40,
+                height: 40,
+                "&:hover": { bgcolor: "grey.100" },
+              }}
+              aria-label="properties list"
+              onClick={handleMenuOpen}
+            >
+              <ListIcon fontSize="small" />
+            </IconButton>
           </Box>
         </Box>
+
+        <PopulationDensityMap
+          properties={properties}
+          selectedProperty={selectedProperty}
+          onPropertySelect={setSelectedProperty}
+        />
+
+        <PropertyListMenu
+          anchorEl={menuAnchorEl}
+          open={menuOpen}
+          onClose={handleMenuClose}
+          properties={properties}
+          selectedProperty={selectedProperty}
+          onSelect={setSelectedProperty}
+          dataSource={dataSource}
+        />
       </Box>
     </Drawer>
   );

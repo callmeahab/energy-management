@@ -18,17 +18,79 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
+import { useEnergyData } from "@/contexts/DataContext";
+
+interface HistoricalAnalytics {
+  summary: {
+    totalSavingsPotential: number;
+    potentialSavings: number;
+    avgEfficiency: number;
+  };
+  dailyData: Array<{
+    date: string;
+    consumption: number;
+    cost: number;
+    savingsPotential: number;
+  }>;
+}
 
 const CostSavingChart = () => {
-  const { energyData, energyLoading, energySummary } = useEnergyData();
-  const { buildings } = useBuildingData();
+  const { energyData, energyLoading, energySummary, currentTimeRange } =
+    useEnergyData();
+  const [historicalAnalytics, setHistoricalAnalytics] =
+    React.useState<HistoricalAnalytics | null>(null);
+
+  // Fetch historical analytics data
+  React.useEffect(() => {
+    const fetchHistoricalAnalytics = async () => {
+      try {
+        const response = await fetch(
+          `/api/analytics/historical?timeRange=${currentTimeRange}`
+        );
+        const result = await response.json();
+        if (result.success) {
+          setHistoricalAnalytics(result.data);
+        }
+      } catch (error) {
+        console.error(
+          "Failed to fetch historical analytics for cost saving chart:",
+          error
+        );
+      }
+    };
+
+    fetchHistoricalAnalytics();
+  }, [currentTimeRange]);
 
   const chartData = React.useMemo(() => {
+    // Use historical analytics data if available for accurate savings calculations
+    if (
+      historicalAnalytics?.dailyData &&
+      historicalAnalytics.dailyData.length > 0
+    ) {
+      return historicalAnalytics.dailyData
+        .slice(-7) // Last 7 days
+        .map((day) => {
+          const date = new Date(day.date);
+          const dayName = date.toLocaleDateString("en-US", {
+            weekday: "short",
+          });
+
+          return {
+            day: dayName,
+            savings: Math.round(day.savingsPotential),
+            consumption: Math.round(day.consumption),
+            actualCost: Math.round(day.cost),
+            potentialSavings: Math.round(day.savingsPotential),
+          };
+        });
+    }
+
     if (energyData.length === 0) {
       return [];
     }
 
+    // Fallback to existing logic
     return energyData
       .slice(0, 7)
       .map((item) => {
@@ -45,7 +107,7 @@ const CostSavingChart = () => {
         };
       })
       .reverse();
-  }, [energyData]);
+  }, [energyData, historicalAnalytics]);
 
   const hasRealData = energySummary && energySummary.total_records > 0;
 
@@ -129,7 +191,7 @@ const CostSavingChart = () => {
                     letterSpacing: "-0.01em",
                   }}
                 >
-                  Cost and time saving estimate
+                  Cost and consumption savings estimate
                 </Box>
               </Box>
 
@@ -159,16 +221,17 @@ const CostSavingChart = () => {
               </Box>
             </Box>
 
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              An improvement over time based on our tracking data
-            </Typography>
-
             <Box sx={{ height: "250px", flexGrow: 1, my: "auto" }}>
               {chartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
                     <Legend verticalAlign="top" height={36} />
-                    <XAxis dataKey="day" axisLine tickLine tickMargin={8}></XAxis>
+                    <XAxis
+                      dataKey="day"
+                      axisLine
+                      tickLine
+                      tickMargin={8}
+                    ></XAxis>
                     <YAxis axisLine tickLine tickMargin={8}></YAxis>
                     <Bar
                       dataKey="savings"
