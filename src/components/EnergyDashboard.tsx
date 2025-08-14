@@ -21,7 +21,7 @@ import Image from "next/image";
 import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
 import ConsumptionCard from "./ConsumptionCard";
 import CostSavingChart from "./CostSavingChart";
-import AlertsDropdown from "./AlertsDropdown";
+import AlertsCard from "./AlertsCard";
 import CombinedEfficiencyCard from "./CombinedEfficiencyCard";
 import BuildingFloorPlan from "./BuildingFloorPlan";
 import PropertiesMapDrawer from "./PropertiesMapDrawer";
@@ -90,34 +90,32 @@ const EnergyDashboard = () => {
 
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
                 <ButtonGroup variant="text" sx={{ gap: 0, border: "none" }}>
-                  {(["month", "week", "day"] as TimeRange[]).map(
-                    (range) => (
-                      <Button
-                        key={range}
-                        onClick={() => handleTimeRangeChange(range)}
-                        sx={{
-                          textTransform: "capitalize",
-                          color:
-                            currentTimeRange === range
-                              ? "primary.main"
-                              : "text.secondary",
-                          borderBottom:
-                            currentTimeRange === range ? "3px solid" : "none",
-                          borderColor: "primary.main",
-                          borderLeft: "none!important",
-                          borderRight: "none!important",
-                          borderRadius: 0,
-                          minWidth: "auto",
-                          "&:hover": {
-                            backgroundColor: "action.hover",
-                          },
-                          fontWeight: 600,
-                        }}
-                      >
-                        {range}
-                      </Button>
-                    )
-                  )}
+                  {(["month", "week", "day"] as TimeRange[]).map((range) => (
+                    <Button
+                      key={range}
+                      onClick={() => handleTimeRangeChange(range)}
+                      sx={{
+                        textTransform: "capitalize",
+                        color:
+                          currentTimeRange === range
+                            ? "primary.main"
+                            : "text.secondary",
+                        borderBottom:
+                          currentTimeRange === range ? "3px solid" : "none",
+                        borderColor: "primary.main",
+                        borderLeft: "none!important",
+                        borderRight: "none!important",
+                        borderRadius: 0,
+                        minWidth: "auto",
+                        "&:hover": {
+                          backgroundColor: "action.hover",
+                        },
+                        fontWeight: 600,
+                      }}
+                    >
+                      {range}
+                    </Button>
+                  ))}
                 </ButtonGroup>
               </Box>
             </Box>
@@ -171,7 +169,7 @@ const EnergyDashboard = () => {
                 </Box>
               )}
 
-              <AlertsDropdown />
+              {/* Alerts moved from dropdown to a dedicated dashboard card */}
 
               <IconButton
                 onClick={() => {}}
@@ -231,9 +229,20 @@ const EnergyDashboard = () => {
               size={{
                 xs: 12,
                 sm: 12,
+                md: propertiesDrawerOpen ? 12 : 12,
+                lg: propertiesDrawerOpen ? 12 : 6,
+                xl: propertiesDrawerOpen ? 6 : 4,
+              }}
+            >
+              <AlertsCard />
+            </Grid>
+            <Grid
+              size={{
+                xs: 12,
+                sm: 12,
                 md: 12,
                 lg: propertiesDrawerOpen ? 12 : 12,
-                xl: propertiesDrawerOpen ? 12 : 8,
+                xl: propertiesDrawerOpen ? 12 : 12,
               }}
             >
               <CombinedEfficiencyCard />

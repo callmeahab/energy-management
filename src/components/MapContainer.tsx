@@ -28,10 +28,9 @@ import {
 } from "@/types/map";
 import LayerControls, { BasicViewState } from "@/components/map/LayerControls";
 
-const MAPBOX_ACCESS_TOKEN =
-  process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "YOUR_MAPBOX_TOKEN_HERE";
+const MAPBOX_ACCESS_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
-interface PopulationDensityMapProps {
+interface MapContainerProps {
   properties?: Property[];
   selectedProperty?: Property | null;
   onPropertySelect?: (property: Property | null) => void;
@@ -43,11 +42,11 @@ function DeckGLOverlay(props: DeckProps) {
   return null;
 }
 
-const PopulationDensityMap = ({
+const MapContainer = ({
   properties = [],
   selectedProperty = null,
   onPropertySelect,
-}: PopulationDensityMapProps) => {
+}: MapContainerProps) => {
   const [viewState, setViewState] = useState<BasicViewState>({
     longitude: -98.5795,
     latitude: 39.8283,
@@ -578,4 +577,4 @@ const PopulationDensityMap = ({
   );
 };
 
-export default PopulationDensityMap;
+export default MapContainer;

@@ -2,22 +2,8 @@
 
 import React from "react";
 import Image from "next/image";
-import {
-  Card,
-  CardContent,
-  Typography,
-  Box,
-  Chip,
-  Skeleton,
-} from "@mui/material";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  ResponsiveContainer,
-  Legend,
-} from "recharts";
+import { Card, CardContent, Typography, Box, Skeleton } from "@mui/material";
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from "recharts";
 import { useEnergyData } from "@/contexts/DataContext";
 
 interface HistoricalAnalytics {
@@ -139,8 +125,10 @@ const CostSavingChart = () => {
   }
 
   return (
-    <Card sx={{ height: "100%", px: 2, py: 3 }}>
-      <CardContent>
+    <Card sx={{ display: "flex", height: "100%", px: 2, py: 3 }}>
+      <CardContent
+        sx={{ display: "flex", flexDirection: "column", flexGrow: 1 }}
+      >
         {energyLoading ? (
           <>
             <Skeleton variant="text" width="80%" height={40} />
@@ -194,30 +182,75 @@ const CostSavingChart = () => {
                   Cost and consumption savings estimate
                 </Box>
               </Box>
+            </Box>
 
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                <Chip
-                  label="Mapped.com API"
-                  size="small"
-                  color="primary"
-                  variant="outlined"
-                />
-                {hasRealData && (
+            <Box
+              sx={{
+                display: "flex",
+                gap: 3,
+                mb: 3,
+                fontWeight: 600,
+                justifyContent: "center",
+                backgroundColor: "#F9F9F9",
+                padding: 2,
+              }}
+            >
+              <Box sx={{ textAlign: "center", flex: 1 }}>
+                <Typography
+                  variant="body2"
+                  sx={{ fontWeight: 600, color: "#5A6C83" }}
+                >
+                  An improvement over time based on changes
+                </Typography>
+              </Box>
+            </Box>
+
+            <Box sx={{ mb: 2 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  mx: "auto",
+                  justifyContent: "center",
+                  gap: 3,
+                  mb: 2,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                  }}
+                >
                   <Box
                     sx={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      bgcolor: "success.main",
-                      animation: "pulse 2s infinite",
-                      "@keyframes pulse": {
-                        "0%": { opacity: 1 },
-                        "50%": { opacity: 0.5 },
-                        "100%": { opacity: 1 },
-                      },
+                      width: 16,
+                      height: 16,
+                      bgcolor: "#4caf50",
                     }}
                   />
-                )}
+                  <Typography variant="body2" color="text.secondary">
+                    Savings
+                  </Typography>
+                </Box>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 16,
+                      height: 16,
+                      bgcolor: "#ff9800",
+                    }}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    Consumption
+                  </Typography>
+                </Box>
               </Box>
             </Box>
 
@@ -225,7 +258,6 @@ const CostSavingChart = () => {
               {chartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
-                    <Legend verticalAlign="top" height={36} />
                     <XAxis
                       dataKey="day"
                       axisLine

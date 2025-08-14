@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { Drawer, Box, IconButton } from "@mui/material";
 import { Close, List as ListIcon } from "@mui/icons-material";
 import { useQuery } from "@apollo/client";
-import PopulationDensityMap from "./PopulationDensityMap";
+import MapContainer from "./MapContainer";
 import { GET_BUILDINGS, GET_SITES } from "@/lib/queries";
 import { Property, Site } from "@/types/energy";
 import {
@@ -170,7 +170,7 @@ const PropertiesMapDrawer = ({
           </Box>
         </Box>
 
-        <PopulationDensityMap
+        <MapContainer
           properties={properties}
           selectedProperty={selectedProperty}
           onPropertySelect={setSelectedProperty}

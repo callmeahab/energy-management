@@ -36,30 +36,8 @@ interface Metrics {
   renewablePotential?: number;
 }
 
-interface HistoricalAnalytics {
-  summary: {
-    totalConsumption: number;
-    totalCost: number;
-    avgEfficiency: number;
-    consumptionTrend: number;
-    costTrend: number;
-    potentialSavings: number;
-    renewableSavings: number;
-    totalSavingsPotential: number;
-  };
-  dailyData: Array<{
-    date: string;
-    consumption: number;
-    cost: number;
-    renewableCost: number;
-    renewableConsumption: number;
-    savingsPotential: number;
-  }>;
-}
-
 const ConsumptionCard = () => {
-  const { energyData, energySummary, energyLoading, currentTimeRange } =
-    useEnergyData();
+  const { energyData, energySummary, energyLoading } = useEnergyData();
   const [viewMode, setViewMode] = useState<"kwh" | "cost">("cost");
 
   const chartData = useMemo<ChartDatum[]>(() => {
