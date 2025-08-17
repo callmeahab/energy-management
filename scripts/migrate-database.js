@@ -35,17 +35,32 @@ async function migrateDatabase() {
 
       // Add new columns to buildings table
       const buildingMigrations = [
+        // Identifiers and metadata
         "ALTER TABLE buildings ADD COLUMN mapping_key TEXT",
         "ALTER TABLE buildings ADD COLUMN connected_data_source_id TEXT",
         "ALTER TABLE buildings ADD COLUMN time_zone TEXT",
         "ALTER TABLE buildings ADD COLUMN type_array TEXT",
+        // Address (flattened)
         "ALTER TABLE buildings ADD COLUMN address_id TEXT",
+        "ALTER TABLE buildings ADD COLUMN address_street TEXT",
+        "ALTER TABLE buildings ADD COLUMN address_city TEXT",
+        "ALTER TABLE buildings ADD COLUMN address_state TEXT",
+        "ALTER TABLE buildings ADD COLUMN address_country TEXT",
+        "ALTER TABLE buildings ADD COLUMN address_postal_code TEXT",
+        // Geolocation
+        "ALTER TABLE buildings ADD COLUMN latitude REAL",
+        "ALTER TABLE buildings ADD COLUMN longitude REAL",
+        // Areas
         "ALTER TABLE buildings ADD COLUMN gross_area_value REAL",
         "ALTER TABLE buildings ADD COLUMN gross_area_unit TEXT",
         "ALTER TABLE buildings ADD COLUMN rentable_area_value REAL",
         "ALTER TABLE buildings ADD COLUMN rentable_area_unit TEXT",
         "ALTER TABLE buildings ADD COLUMN usable_area_value REAL",
         "ALTER TABLE buildings ADD COLUMN usable_area_unit TEXT",
+        // Standard timestamps (in case older DBs are missing them)
+        "ALTER TABLE buildings ADD COLUMN date_created TEXT",
+        "ALTER TABLE buildings ADD COLUMN date_updated TEXT",
+        "ALTER TABLE buildings ADD COLUMN sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP",
       ];
 
       // Add new columns to floors table

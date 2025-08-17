@@ -178,6 +178,27 @@ BALANCING_AUTHORITIES: List[Dict[str, Any]] = [
 
 db = Database()
 
+# ----------------------------------------------------------------------------
+# Routes: Maintenance - Backfill half-hour energy consumption
+# ----------------------------------------------------------------------------
+
+
+@app.post("/api/maintenance/backfill-energy")
+def backfill_energy(
+    startTime: Optional[str] = Query(default=None),
+    endTime: Optional[str] = Query(default=None),
+    rebuild: bool = Query(default=False),
+):
+    try:
+        ensure_initialized()
+        count = db.backfill_energy_consumption(
+            start_time=startTime, end_time=endTime, rebuild=rebuild
+        )
+        return JSONResponse({"success": True, "recordsProcessed": count})
+    except Exception as e:
+        logger.exception("Backfill API error")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 def ensure_initialized() -> None:
     # Initialize schema if not present

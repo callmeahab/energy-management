@@ -8,7 +8,7 @@ import time
 import sqlite3
 import logging
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List, Any
 from database import Database
 
@@ -100,7 +100,30 @@ class SyncService:
             except Exception as e:
                 error_messages.append(f"Consumption calculation error: {e}")
                 total_errors += 1
-                logger.error(f"Energy consumption calculation failed: {e}", exc_info=True)
+                logger.error(
+                    f"Energy consumption calculation failed: {e}", exc_info=True
+                )
+
+            # Step 3: Backfill half-hour aggregated consumption for the last month (idempotent)
+            try:
+                now_utc = datetime.now(timezone.utc)
+                one_month_ago = now_utc - timedelta(days=30)
+                # Use Z-suffix for consistency with stored GraphQL timestamps
+                end_iso_z = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                start_iso_z = one_month_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
+                backfill_count = self.db.backfill_energy_consumption(
+                    start_time=start_iso_z,
+                    end_time=end_iso_z,
+                    rebuild=False,
+                )
+                total_records += backfill_count
+                logger.info(
+                    f"Half-hour backfill added/updated {backfill_count} records in energy_consumption"
+                )
+            except Exception as e:
+                error_messages.append(f"Half-hour backfill error: {e}")
+                total_errors += 1
+                logger.error(f"Half-hour backfill failed: {e}", exc_info=True)
 
             duration = time.time() - start_time
             success = total_errors == 0
@@ -288,12 +311,16 @@ class SyncService:
                             logger.error(f"Failed to sync floor {floor['id']}: {e}")
                             errors_count += 1
 
-
                 except Exception as e:
-                    building_id = building.get('id', 'UNKNOWN_ID') if building else 'NO_BUILDING_DATA'
+                    building_id = (
+                        building.get("id", "UNKNOWN_ID")
+                        if building
+                        else "NO_BUILDING_DATA"
+                    )
                     logger.error(f"Failed to sync building {building_id}: {e}")
                     logger.error(f"Building data: {building}")
                     import traceback
+
                     logger.error(f"Full traceback: {traceback.format_exc()}")
                     errors_count += 1
 
@@ -444,7 +471,6 @@ class SyncService:
                                 )
                                 errors_count += 1
 
-
                     except Exception as e:
                         logger.error(
                             f"Failed to sync building from site {building['id']}: {e}"
@@ -468,12 +494,40 @@ class SyncService:
             # Get all buildings from API (no filtering needed)
             logger.info("Fetching all buildings from API for sensor data sync")
 
-            # Use your comprehensive GraphQL query for all sensor data (no building ID filter)
+            # Use comprehensive GraphQL query for all sensor data with a 30-day time window
+            now_utc = datetime.now(timezone.utc)
+            one_month_ago = now_utc - timedelta(days=30)
+            # Use Z-suffix for consistency with stored GraphQL timestamps
+            end_iso_z = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+            start_iso_z = one_month_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
+            variables = {
+                "startTime": start_iso_z,
+                "endTime": end_iso_z,
+            }
+
             query = """
-            query GetEnergyPoints {
+            query GetEnergyPoints($startTime: DateTime!, $endTime: DateTime!) {
                 buildings {
                     id
                     name
+                    description
+                    exactType
+                    mappingKey
+                    connectedDataSourceId
+                    timeZone
+                    type
+                    address {
+                        id
+                        streetAddress
+                        locality
+                        region
+                        countryName
+                        postalCode
+                    }
+                    geolocation {
+                        latitude
+                        longitude
+                    }
                     points {
                         id
                         name
@@ -482,7 +536,7 @@ class SyncService:
                         unit {
                             name
                         }
-                        series(latest: true) {
+                        series(startTime: $startTime, endTime: $endTime) {
                             timestamp
                             value {
                                 float64Value
@@ -503,7 +557,7 @@ class SyncService:
                             unit {
                                 name
                             }
-                            series(latest: true) {
+                            series(startTime: $startTime, endTime: $endTime) {
                                 timestamp
                                 value {
                                     float64Value
@@ -524,7 +578,7 @@ class SyncService:
                                 unit {
                                     name
                                 }
-                                series(latest: true) {
+                                series(startTime: $startTime, endTime: $endTime) {
                                     timestamp
                                     value {
                                         float64Value
@@ -541,32 +595,46 @@ class SyncService:
             }
             """
 
-            response = self._make_graphql_request(query)
+            response = self._make_graphql_request(query, variables)
 
             if "errors" in response:
                 logger.error(f"Sensor data query failed: {response['errors']}")
-                return {"records_synced": 0, "errors_count": 1, "error_message": str(response['errors'])}
+                return {
+                    "records_synced": 0,
+                    "errors_count": 1,
+                    "error_message": str(response["errors"]),
+                }
 
             buildings_data = response.get("data", {}).get("buildings", [])
-            logger.info(f"Sensor data GraphQL response received for {len(buildings_data)} buildings")
+            logger.info(
+                f"Sensor data GraphQL response received for {len(buildings_data)} buildings"
+            )
 
             for building in buildings_data:
                 # First, sync/update the building itself
                 try:
                     self.db.upsert_building(building)
                     records_synced += 1
-                    logger.info(f"Synced building: {building['id']} - {building.get('name', 'Unnamed')}")
+                    logger.info(
+                        f"Synced building: {building['id']} - {building.get('name', 'Unnamed')}"
+                    )
                 except Exception as e:
-                    logger.error(f"Failed to sync building {building.get('id', 'unknown')}: {e}")
+                    logger.error(
+                        f"Failed to sync building {building.get('id', 'unknown')}: {e}"
+                    )
                     errors_count += 1
 
                 # Sync building-level points
                 for point in building.get("points", []):
                     try:
-                        count = self._process_sensor_point(point, building["id"], None, None)
+                        count = self._process_sensor_point(
+                            point, building["id"], None, None
+                        )
                         records_synced += count
                     except Exception as e:
-                        logger.error(f"Failed to sync building point {point.get('id', 'unknown')}: {e}")
+                        logger.error(
+                            f"Failed to sync building point {point.get('id', 'unknown')}: {e}"
+                        )
                         errors_count += 1
 
                 # Sync floor-level data
@@ -575,18 +643,26 @@ class SyncService:
                     try:
                         self.db.upsert_floor(floor, building["id"])
                         records_synced += 1
-                        logger.debug(f"Synced floor: {floor['id']} - {floor.get('name', 'Unnamed')}")
+                        logger.debug(
+                            f"Synced floor: {floor['id']} - {floor.get('name', 'Unnamed')}"
+                        )
                     except Exception as e:
-                        logger.error(f"Failed to sync floor {floor.get('id', 'unknown')}: {e}")
+                        logger.error(
+                            f"Failed to sync floor {floor.get('id', 'unknown')}: {e}"
+                        )
                         errors_count += 1
 
                     # Sync floor-level points
                     for point in floor.get("points", []):
                         try:
-                            count = self._process_sensor_point(point, building["id"], floor["id"], None)
+                            count = self._process_sensor_point(
+                                point, building["id"], floor["id"], None
+                            )
                             records_synced += count
                         except Exception as e:
-                            logger.error(f"Failed to sync floor point {point.get('id', 'unknown')}: {e}")
+                            logger.error(
+                                f"Failed to sync floor point {point.get('id', 'unknown')}: {e}"
+                            )
                             errors_count += 1
 
                     # Sync space-level data
@@ -595,41 +671,57 @@ class SyncService:
                         try:
                             self.db.upsert_space(space, floor["id"], building["id"])
                             records_synced += 1
-                            logger.debug(f"Synced space: {space['id']} - {space.get('name', 'Unnamed')}")
+                            logger.debug(
+                                f"Synced space: {space['id']} - {space.get('name', 'Unnamed')}"
+                            )
                         except Exception as e:
-                            logger.error(f"Failed to sync space {space.get('id', 'unknown')}: {e}")
+                            logger.error(
+                                f"Failed to sync space {space.get('id', 'unknown')}: {e}"
+                            )
                             errors_count += 1
 
                         # Sync space-level points
                         for point in space.get("points", []):
                             try:
-                                count = self._process_sensor_point(point, building["id"], floor["id"], space["id"])
+                                count = self._process_sensor_point(
+                                    point, building["id"], floor["id"], space["id"]
+                                )
                                 records_synced += count
                             except Exception as e:
-                                logger.error(f"Failed to sync space point {point.get('id', 'unknown')}: {e}")
+                                logger.error(
+                                    f"Failed to sync space point {point.get('id', 'unknown')}: {e}"
+                                )
                                 errors_count += 1
 
-            logger.info(f"Sensor data sync completed: {records_synced} records synced, {errors_count} errors")
+            logger.info(
+                f"Sensor data sync completed: {records_synced} records synced, {errors_count} errors"
+            )
 
         except Exception as e:
             logger.error(f"Sensor data sync failed: {e}")
             errors_count += 1
-            return {"records_synced": records_synced, "errors_count": errors_count, "error_message": str(e)}
+            return {
+                "records_synced": records_synced,
+                "errors_count": errors_count,
+                "error_message": str(e),
+            }
 
         return {"records_synced": records_synced, "errors_count": errors_count}
 
     def _calculate_energy_consumption(self) -> Dict[str, Any]:
         """Calculate and store energy consumption from watts sensors"""
         logger.info("Starting energy consumption calculation")
-        
+
         try:
             records_synced = self.db.calculate_and_store_energy_consumption()
             watts_sensors_count = self.db.get_watts_sensors_count()
-            
-            logger.info(f"Energy consumption calculation completed: {records_synced} records calculated from {watts_sensors_count} watts sensors")
-            
+
+            logger.info(
+                f"Energy consumption calculation completed: {records_synced} records calculated from {watts_sensors_count} watts sensors"
+            )
+
             return {"records_synced": records_synced, "errors_count": 0}
-            
+
         except Exception as e:
             logger.error(f"Energy consumption calculation failed: {e}")
             return {"records_synced": 0, "errors_count": 1, "error_message": str(e)}
@@ -647,15 +739,21 @@ class SyncService:
             return 0
 
         records_inserted = 0
-        
+
         try:
             # Store/update point metadata
             self.db.upsert_point(point, building_id, floor_id, space_id)
             records_inserted += 1
-            
-            unit_name = point.get("unit", {}).get("name", "unknown") if point.get("unit") else "unknown"
-            logger.debug(f"Stored point {point['id']} ({point.get('name', 'unnamed')}) with unit: {unit_name}")
-            
+
+            unit_name = (
+                point.get("unit", {}).get("name", "unknown")
+                if point.get("unit")
+                else "unknown"
+            )
+            logger.debug(
+                f"Stored point {point['id']} ({point.get('name', 'unnamed')}) with unit: {unit_name}"
+            )
+
             # Store series data - handle case where series might be None or empty
             series_data_list = point.get("series") or []
             if series_data_list:
@@ -664,15 +762,21 @@ class SyncService:
                         if series_data:  # Check if series_data is not None
                             self.db.upsert_point_series(point["id"], series_data)
                             records_inserted += 1
-                            logger.debug(f"Stored series data for point {point['id']} at {series_data.get('timestamp', 'unknown time')}")
+                            logger.debug(
+                                f"Stored series data for point {point['id']} at {series_data.get('timestamp', 'unknown time')}"
+                            )
                     except Exception as e:
-                        logger.error(f"Failed to store series data for point {point['id']}: {e}")
+                        logger.error(
+                            f"Failed to store series data for point {point['id']}: {e}"
+                        )
                         # Don't raise, continue with other series data
             else:
                 logger.debug(f"No series data available for point {point['id']}")
-            
+
         except Exception as e:
-            logger.error(f"Failed to process sensor point {point.get('id', 'unknown')}: {e}")
+            logger.error(
+                f"Failed to process sensor point {point.get('id', 'unknown')}: {e}"
+            )
             raise
 
         return records_inserted
@@ -688,4 +792,3 @@ class SyncService:
     def _upsert_space(self, space: Dict, floor_id: str, building_id: str):
         """Insert or update space record"""
         self.db.upsert_space(space, floor_id, building_id)
-

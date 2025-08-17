@@ -57,9 +57,108 @@ class Database:
                 execute_schema_script(conn)
                 logger.info("Database initialized successfully with common schema")
 
+                # Ensure backward-compatible columns exist for existing databases
+                self._ensure_schema_compatibility(conn)
+
             except Exception as e:
                 logger.error(f"Failed to initialize database with common schema: {e}")
                 raise
+
+    def _ensure_schema_compatibility(self, conn: sqlite3.Connection) -> None:
+        """Add any missing columns expected by the current application schema.
+
+        SQLite does not support ALTER COLUMN IF NOT EXISTS, so we inspect the
+        current table definitions and add any missing columns individually.
+        """
+
+        def get_existing_columns(table: str) -> List[str]:
+            cur = conn.cursor()
+            cur.execute(f"PRAGMA table_info({table})")
+            return [row[1] for row in cur.fetchall()]
+
+        def ensure_columns(table: str, columns: List[Dict[str, str]]) -> None:
+            existing = set(get_existing_columns(table))
+            cur = conn.cursor()
+            for col in columns:
+                name = col["name"]
+                col_type = col["type"]
+                if name not in existing:
+                    try:
+                        logger.info(
+                            f"Adding missing column {table}.{name} ({col_type})"
+                        )
+                        cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
+                    except sqlite3.Error as e:
+                        # Ignore duplicate column errors due to race or prior runs
+                        if "duplicate column name" not in str(e).lower():
+                            logger.warning(f"Column add failed for {table}.{name}: {e}")
+            conn.commit()
+
+        # Buildings expected columns
+        ensure_columns(
+            "buildings",
+            [
+                {"name": "mapping_key", "type": "TEXT"},
+                {"name": "connected_data_source_id", "type": "TEXT"},
+                {"name": "time_zone", "type": "TEXT"},
+                {"name": "type_array", "type": "TEXT"},
+                # Address
+                {"name": "address_id", "type": "TEXT"},
+                {"name": "address_street", "type": "TEXT"},
+                {"name": "address_city", "type": "TEXT"},
+                {"name": "address_state", "type": "TEXT"},
+                {"name": "address_country", "type": "TEXT"},
+                {"name": "address_postal_code", "type": "TEXT"},
+                # Geolocation
+                {"name": "latitude", "type": "REAL"},
+                {"name": "longitude", "type": "REAL"},
+                # Areas
+                {"name": "gross_area_value", "type": "REAL"},
+                {"name": "gross_area_unit", "type": "TEXT"},
+                {"name": "rentable_area_value", "type": "REAL"},
+                {"name": "rentable_area_unit", "type": "TEXT"},
+                {"name": "usable_area_value", "type": "REAL"},
+                {"name": "usable_area_unit", "type": "TEXT"},
+                # Timestamps
+                {"name": "date_created", "type": "TEXT"},
+                {"name": "date_updated", "type": "TEXT"},
+                {"name": "sync_timestamp", "type": "TEXT"},
+            ],
+        )
+
+        # Floors expected columns
+        ensure_columns(
+            "floors",
+            [
+                {"name": "exact_type", "type": "TEXT"},
+                {"name": "level", "type": "INTEGER"},
+                {"name": "mapping_key", "type": "TEXT"},
+                {"name": "connected_data_source_id", "type": "TEXT"},
+                {"name": "gross_area_value", "type": "REAL"},
+                {"name": "gross_area_unit", "type": "TEXT"},
+                {"name": "rentable_area_value", "type": "REAL"},
+                {"name": "rentable_area_unit", "type": "TEXT"},
+                {"name": "usable_area_value", "type": "REAL"},
+                {"name": "usable_area_unit", "type": "TEXT"},
+                {"name": "type_array", "type": "TEXT"},
+                {"name": "date_created", "type": "TEXT"},
+                {"name": "date_updated", "type": "TEXT"},
+                {"name": "sync_timestamp", "type": "TEXT"},
+            ],
+        )
+
+        # Spaces expected columns
+        ensure_columns(
+            "spaces",
+            [
+                {"name": "mapping_key", "type": "TEXT"},
+                {"name": "connected_data_source_id", "type": "TEXT"},
+                {"name": "type_array", "type": "TEXT"},
+                {"name": "date_created", "type": "TEXT"},
+                {"name": "date_updated", "type": "TEXT"},
+                {"name": "sync_timestamp", "type": "TEXT"},
+            ],
+        )
 
     def get_all_buildings(self) -> List[Dict]:
         """Get all buildings from the database"""
@@ -268,7 +367,6 @@ class Database:
                     current_time,
                 ),
             )
-
 
     def get_last_sync_timestamp(self, sync_type: str) -> Optional[datetime]:
         """Get the last sync timestamp for a given sync type"""
@@ -519,3 +617,160 @@ class Database:
                 stats[table] = cursor.fetchone()[0]
 
             return stats
+
+    def backfill_energy_consumption(
+        self,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        rebuild: bool = False,
+    ) -> int:
+        """
+        Aggregate all historical watts readings into 30-minute buckets per building/floor/space
+        and store into energy_consumption with average watts and derived kWh for the half-hour.
+
+        kWh calculation uses avg_watts over the bucket: total_kwh = (avg_watts / 1000) * 0.5
+
+        If rebuild is True, existing energy_consumption rows within the provided time range
+        will be deleted before backfill to avoid duplication.
+        """
+        import math
+        from datetime import datetime, timezone
+
+        def parse_ts(ts_str: str) -> datetime:
+            # Normalize common ISO forms to be parseable by fromisoformat
+            if ts_str.endswith("Z"):
+                ts_str = ts_str[:-1] + "+00:00"
+            try:
+                return datetime.fromisoformat(ts_str)
+            except Exception:
+                # Fallback: try without timezone and assume UTC
+                try:
+                    return datetime.strptime(
+                        ts_str.split(".")[0].replace("T", " "), "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=timezone.utc)
+                except Exception:
+                    return datetime.now(timezone.utc)
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            conditions = [
+                "p.unit_name = 'Watt'",
+                "(ps.float64_value IS NOT NULL OR ps.float32_value IS NOT NULL)",
+            ]
+            params: List[Any] = []
+            if start_time:
+                conditions.append("ps.timestamp >= ?")
+                params.append(start_time)
+            if end_time:
+                conditions.append("ps.timestamp <= ?")
+                params.append(end_time)
+            where_sql = " WHERE " + " AND ".join(conditions)
+
+            logger.info("Loading watts readings for 30-minute backfill...")
+            cursor.execute(
+                f"""
+                SELECT 
+                  p.building_id,
+                  p.floor_id,
+                  p.space_id,
+                  ps.timestamp,
+                  COALESCE(ps.float64_value, ps.float32_value) as watt_value
+                FROM points p
+                JOIN point_series ps ON p.id = ps.point_id
+                {where_sql}
+                ORDER BY p.building_id, p.floor_id, p.space_id, ps.timestamp
+                """,
+                params,
+            )
+
+            rows = cursor.fetchall()
+            if not rows:
+                logger.info("No watts data found for backfill")
+                return 0
+
+            if rebuild:
+                # Determine deletion window aligned to half-hour boundaries
+                if start_time or end_time:
+                    del_conditions = []
+                    del_params: List[Any] = []
+                    if start_time:
+                        del_conditions.append("timestamp >= ?")
+                        del_params.append(start_time)
+                    if end_time:
+                        del_conditions.append("timestamp <= ?")
+                        del_params.append(end_time)
+                    del_where = (
+                        (" WHERE " + " AND ".join(del_conditions))
+                        if del_conditions
+                        else ""
+                    )
+                else:
+                    del_where = ""
+                    del_params = []
+                cursor.execute(f"DELETE FROM energy_consumption{del_where}", del_params)
+                conn.commit()
+
+            # Aggregate into 30-minute buckets
+            buckets: Dict[str, Dict[str, Any]] = {}
+
+            for r in rows:
+                building_id, floor_id, space_id, ts_str, watt_value = r
+                if watt_value is None:
+                    continue
+                dt = parse_ts(str(ts_str))
+                # Align to 30-minute bucket
+                minute = 0 if dt.minute < 30 else 30
+                bucket_dt = dt.replace(minute=minute, second=0, microsecond=0)
+                # Store as UTC ISO without timezone for SQLite-friendly string
+                # Format: YYYY-MM-DD HH:MM:SS
+                bucket_str = bucket_dt.astimezone(timezone.utc).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+
+                key = f"{building_id}_{floor_id or 'null'}_{space_id or 'null'}_{bucket_str}"
+
+                grouped = buckets.get(key)
+                if not grouped:
+                    grouped = {
+                        "building_id": building_id,
+                        "floor_id": floor_id,
+                        "space_id": space_id,
+                        "timestamp": bucket_str,
+                        "sum_watts": 0.0,
+                        "count": 0,
+                    }
+                    buckets[key] = grouped
+                grouped["sum_watts"] += float(watt_value)
+                grouped["count"] += 1
+
+            # Write aggregated records
+            now_iso = datetime.now(timezone.utc).isoformat()
+            records_inserted = 0
+            for key, g in buckets.items():
+                avg_watts = (g["sum_watts"] / g["count"]) if g["count"] > 0 else 0.0
+                total_kwh = (avg_watts / 1000.0) * 0.5
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO energy_consumption (
+                        id, building_id, floor_id, space_id, timestamp, total_watts, total_kwh, calculation_timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        key,
+                        g["building_id"],
+                        g["floor_id"],
+                        g["space_id"],
+                        g["timestamp"],
+                        avg_watts,
+                        total_kwh,
+                        now_iso,
+                    ),
+                )
+                records_inserted += 1
+
+            conn.commit()
+            logger.info(
+                f"Backfill complete: {records_inserted} half-hour energy records stored"
+            )
+            return records_inserted

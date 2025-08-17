@@ -47,3 +47,6 @@ data
 population-density-data
 
 .venv/
+
+.uvicorn.log
+energy-sync-py/__pycache__/
