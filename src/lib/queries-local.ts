@@ -261,3 +261,130 @@ export function transformEnergyDataForCharts(
     })
     .reverse(); // Reverse to show chronological order
 }
+
+// New interfaces for sensor data
+export interface LocalSensorPoint {
+  id: string;
+  building_id?: string;
+  floor_id?: string;
+  space_id?: string;
+  name: string;
+  description?: string;
+  exact_type: string;
+  unit_name: string;
+  sync_timestamp: string;
+  latest_value?: number | string | boolean;
+  latest_timestamp?: string;
+}
+
+export interface LocalSensorSummary {
+  total_sensors: number;
+  watts_sensors: number;
+  temperature_sensors: number;
+  other_sensors: number;
+  latest_reading?: string;
+}
+
+// Fetch sensor points from local database
+export async function fetchLocalSensorPoints(
+  buildingId?: string,
+  unitName?: string
+): Promise<{ sensors: LocalSensorPoint[]; summary: LocalSensorSummary } | null> {
+  try {
+    const params = new URLSearchParams();
+    
+    if (buildingId) {
+      params.append("buildingId", buildingId);
+    }
+    
+    if (unitName) {
+      params.append("unitName", unitName);
+    }
+
+    const response = await fetch(`/api/sensors?${params.toString()}`);
+
+    if (!response.ok) {
+      console.error("Failed to fetch sensor data:", response.statusText);
+      return null;
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      console.error("Sensor data fetch error:", result.error);
+      return null;
+    }
+
+    return {
+      sensors: result.data.sensors,
+      summary: result.data.summary,
+    };
+  } catch (error) {
+    console.error("Error fetching sensor data:", error);
+    return null;
+  }
+}
+
+// Fetch energy consumption data (calculated from watts sensors)
+export interface LocalEnergyConsumption {
+  id: string;
+  building_id: string;
+  floor_id?: string;
+  space_id?: string;
+  timestamp: string;
+  total_watts: number;
+  total_kwh?: number;
+  calculation_timestamp: string;
+}
+
+export interface LocalConsumptionSummary {
+  total_records: number;
+  total_watts: number;
+  total_kwh: number;
+  avg_watts: number;
+  latest_calculation?: string;
+}
+
+export async function fetchLocalEnergyConsumption(
+  buildingId?: string,
+  startTime?: string,
+  endTime?: string
+): Promise<{ consumption: LocalEnergyConsumption[]; summary: LocalConsumptionSummary } | null> {
+  try {
+    const params = new URLSearchParams();
+    
+    if (buildingId) {
+      params.append("buildingId", buildingId);
+    }
+    
+    if (startTime) {
+      params.append("startTime", startTime);
+    }
+    
+    if (endTime) {
+      params.append("endTime", endTime);
+    }
+
+    const response = await fetch(`/api/energy-consumption?${params.toString()}`);
+
+    if (!response.ok) {
+      console.error("Failed to fetch energy consumption data:", response.statusText);
+      return null;
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      console.error("Energy consumption data fetch error:", result.error);
+      return null;
+    }
+
+    return {
+      consumption: result.data.consumption,
+      summary: result.data.summary,
+    };
+  } catch (error) {
+    console.error("Error fetching energy consumption data:", error);
+    return null;
+  }
+}

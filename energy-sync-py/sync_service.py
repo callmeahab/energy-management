@@ -74,33 +74,33 @@ class SyncService:
                 if last_sync:
                     logger.info(f"Incremental sync from: {last_sync}")
 
-            # Step 1: Sync buildings and structural data
+            # Step 1: Sync all building data and sensors in one comprehensive query
             try:
-                building_result = self._sync_buildings(last_sync)
-                total_records += building_result["records_synced"]
-                total_errors += building_result["errors_count"]
-                if building_result.get("error_message"):
+                sensor_result = self._sync_sensor_data()
+                total_records += sensor_result["records_synced"]
+                total_errors += sensor_result["errors_count"]
+                if sensor_result.get("error_message"):
                     error_messages.append(
-                        f"Building sync error: {building_result['error_message']}"
+                        f"Building and sensor sync error: {sensor_result['error_message']}"
                     )
             except Exception as e:
-                error_messages.append(f"Building sync error: {e}")
+                error_messages.append(f"Building and sensor sync error: {e}")
                 total_errors += 1
-                logger.error(f"Building sync failed: {e}", exc_info=True)
+                logger.error(f"Building and sensor sync failed: {e}", exc_info=True)
 
-            # Step 2: Sync energy consumption data
+            # Step 2: Calculate energy consumption from watts sensors
             try:
-                energy_result = self._sync_energy_data()
-                total_records += energy_result["records_synced"]
-                total_errors += energy_result["errors_count"]
-                if energy_result.get("error_message"):
+                consumption_result = self._calculate_energy_consumption()
+                total_records += consumption_result["records_synced"]
+                total_errors += consumption_result["errors_count"]
+                if consumption_result.get("error_message"):
                     error_messages.append(
-                        f"Energy sync error: {energy_result['error_message']}"
+                        f"Consumption calculation error: {consumption_result['error_message']}"
                     )
             except Exception as e:
-                error_messages.append(f"Energy sync error: {e}")
+                error_messages.append(f"Consumption calculation error: {e}")
                 total_errors += 1
-                logger.error(f"Energy sync failed: {e}", exc_info=True)
+                logger.error(f"Energy consumption calculation failed: {e}", exc_info=True)
 
             duration = time.time() - start_time
             success = total_errors == 0
@@ -457,31 +457,24 @@ class SyncService:
 
         return {"records_synced": records_synced, "errors_count": errors_count}
 
-    def _sync_energy_data(self) -> Dict[str, Any]:
-        """Sync energy consumption data from Mapped API"""
-        logger.info("Starting energy data sync")
+    def _sync_sensor_data(self) -> Dict[str, Any]:
+        """Sync all building data and sensor data from Mapped API using comprehensive query"""
+        logger.info("Starting comprehensive building and sensor data sync")
 
         records_synced = 0
         errors_count = 0
 
         try:
-            # Get all buildings from database
-            buildings = self.db.get_all_buildings()
+            # Get all buildings from API (no filtering needed)
+            logger.info("Fetching all buildings from API for sensor data sync")
 
-            if not buildings:
-                logger.info("No buildings found - skipping energy data sync")
-                return {"records_synced": 0, "errors_count": 0}
-
-            building_ids = [b["id"] for b in buildings]
-            logger.info(f"Syncing energy data for {len(building_ids)} buildings")
-
-            # Query energy points from Mapped API (simplified without non-existent fields)
+            # Use your comprehensive GraphQL query for all sensor data (no building ID filter)
             query = """
-            query GetEnergyPoints($buildingIds: [String!]) {
-                buildings(filter: { id: { in: $buildingIds } }) {
+            query GetEnergyPoints {
+                buildings {
                     id
                     name
-                    points(filter: { exactType: { in: ["Electric_Power_Sensor"] } }) {
+                    points {
                         id
                         name
                         description
@@ -541,169 +534,146 @@ class SyncService:
                                     }
                                 }
                             }
+                            geoshape
                         }
                     }
                 }
             }
             """
 
-            variables = {"buildingIds": building_ids}
-            response = self._make_graphql_request(query, variables)
+            response = self._make_graphql_request(query)
 
             if "errors" in response:
-                logger.error(f"Energy points query failed: {response['errors']}")
-                return {"records_synced": 0, "errors_count": 1}
+                logger.error(f"Sensor data query failed: {response['errors']}")
+                return {"records_synced": 0, "errors_count": 1, "error_message": str(response['errors'])}
 
             buildings_data = response.get("data", {}).get("buildings", [])
-            logger.info(
-                f"Energy points GraphQL response received for {len(buildings_data)} buildings"
-            )
+            logger.info(f"Sensor data GraphQL response received for {len(buildings_data)} buildings")
 
             for building in buildings_data:
+                # First, sync/update the building itself
+                try:
+                    self.db.upsert_building(building)
+                    records_synced += 1
+                    logger.info(f"Synced building: {building['id']} - {building.get('name', 'Unnamed')}")
+                except Exception as e:
+                    logger.error(f"Failed to sync building {building.get('id', 'unknown')}: {e}")
+                    errors_count += 1
+
                 # Sync building-level points
                 for point in building.get("points", []):
                     try:
-                        count = self._process_energy_data_point(
-                            point, building["id"], None, None
-                        )
+                        count = self._process_sensor_point(point, building["id"], None, None)
                         records_synced += count
                     except Exception as e:
-                        logger.error(
-                            f"Failed to sync building point {point['id']}: {e}"
-                        )
+                        logger.error(f"Failed to sync building point {point.get('id', 'unknown')}: {e}")
                         errors_count += 1
 
-                # Sync floor-level points
+                # Sync floor-level data
                 for floor in building.get("floors", []):
+                    # Sync the floor itself
+                    try:
+                        self.db.upsert_floor(floor, building["id"])
+                        records_synced += 1
+                        logger.debug(f"Synced floor: {floor['id']} - {floor.get('name', 'Unnamed')}")
+                    except Exception as e:
+                        logger.error(f"Failed to sync floor {floor.get('id', 'unknown')}: {e}")
+                        errors_count += 1
+
+                    # Sync floor-level points
                     for point in floor.get("points", []):
                         try:
-                            count = self._process_energy_data_point(
-                                point, building["id"], floor["id"], None
-                            )
+                            count = self._process_sensor_point(point, building["id"], floor["id"], None)
                             records_synced += count
                         except Exception as e:
-                            logger.error(
-                                f"Failed to sync floor point {point['id']}: {e}"
-                            )
+                            logger.error(f"Failed to sync floor point {point.get('id', 'unknown')}: {e}")
                             errors_count += 1
 
-                    # Sync space-level points
+                    # Sync space-level data
                     for space in floor.get("spaces", []):
+                        # Sync the space itself
+                        try:
+                            self.db.upsert_space(space, floor["id"], building["id"])
+                            records_synced += 1
+                            logger.debug(f"Synced space: {space['id']} - {space.get('name', 'Unnamed')}")
+                        except Exception as e:
+                            logger.error(f"Failed to sync space {space.get('id', 'unknown')}: {e}")
+                            errors_count += 1
+
+                        # Sync space-level points
                         for point in space.get("points", []):
                             try:
-                                count = self._process_energy_data_point(
-                                    point, building["id"], floor["id"], space["id"]
-                                )
+                                count = self._process_sensor_point(point, building["id"], floor["id"], space["id"])
                                 records_synced += count
                             except Exception as e:
-                                logger.error(
-                                    f"Failed to sync space point {point['id']}: {e}"
-                                )
+                                logger.error(f"Failed to sync space point {point.get('id', 'unknown')}: {e}")
                                 errors_count += 1
 
-            logger.info(
-                f"Energy data sync completed: {records_synced} records synced, {errors_count} errors"
-            )
+            logger.info(f"Sensor data sync completed: {records_synced} records synced, {errors_count} errors")
 
         except Exception as e:
-            logger.error(f"Energy data sync failed: {e}")
+            logger.error(f"Sensor data sync failed: {e}")
             errors_count += 1
+            return {"records_synced": records_synced, "errors_count": errors_count, "error_message": str(e)}
 
         return {"records_synced": records_synced, "errors_count": errors_count}
 
-    def _process_energy_data_point(
+    def _calculate_energy_consumption(self) -> Dict[str, Any]:
+        """Calculate and store energy consumption from watts sensors"""
+        logger.info("Starting energy consumption calculation")
+        
+        try:
+            records_synced = self.db.calculate_and_store_energy_consumption()
+            watts_sensors_count = self.db.get_watts_sensors_count()
+            
+            logger.info(f"Energy consumption calculation completed: {records_synced} records calculated from {watts_sensors_count} watts sensors")
+            
+            return {"records_synced": records_synced, "errors_count": 0}
+            
+        except Exception as e:
+            logger.error(f"Energy consumption calculation failed: {e}")
+            return {"records_synced": 0, "errors_count": 1, "error_message": str(e)}
+
+    def _process_sensor_point(
         self,
         point: Dict,
         building_id: str,
         floor_id: Optional[str],
         space_id: Optional[str],
     ) -> int:
-        """Process a single energy data point and store hourly records"""
-        if not point.get("series"):
+        """Process a single sensor point and store its metadata and series data"""
+        if not point.get("id"):
+            logger.warning("Point missing ID, skipping")
             return 0
 
         records_inserted = 0
-        current_time = datetime.now(timezone.utc)
         
-        # Log unit information for debugging
-        unit_info = point.get("unit", {})
-        unit_name = unit_info.get("name", "unknown") if unit_info else "unknown"
-        logger.debug(f"Processing point {point.get('id', 'unknown')} with unit: {unit_name}")
-        logger.debug(f"Point exactType: {point.get('exactType', 'unknown')}")
-        logger.debug(f"Series data count: {len(point.get('series', []))}")
-
-        for data_point in point["series"]:
-            try:
-                timestamp_str = data_point.get("timestamp", current_time.isoformat())
-                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-
-                # Extract numeric value
-                value = data_point.get("value", {})
-                numeric_value = (
-                    value.get("float64Value")
-                    or value.get("float32Value")
-                    or (
-                        float(value.get("stringValue", "0"))
-                        if value.get("stringValue")
-                        else 0
-                    )
-                    or (1.0 if value.get("boolValue") else 0.0)
-                )
-
-                if numeric_value is None:
-                    continue
-                
-                # Log the raw value and unit for first few records to understand the data
-                if records_inserted < 3:  # Only log first few to avoid spam
-                    logger.info(f"Raw API data - Point: {point.get('id', 'unknown')[:20]}, Unit: {unit_name}, Raw Value: {numeric_value}, Value Object: {value}")
-
-                # Generate unique ID using the actual timestamp (not bucketed)
-                # This allows us to store each sync run's data as a separate point
-                energy_id = f"{point['id']}_{int(timestamp.timestamp())}"
-
-                # Store instantaneous power reading and calculate minimal energy consumption
-                power_watts = float(numeric_value)
-                power_kw = power_watts / 1000  # Convert watts to kilowatts
-                
-                # For instantaneous readings, calculate energy consumption for 30-minute reporting interval
-                # This represents the energy that would be consumed if this power level continued for 30 minutes
-                consumption = power_kw * 0.5  # kWh for 30-minute interval (0.5 hours)
-                cost = consumption * 0.12  # Assume $0.12 per kWh
-
-                # Calculate efficiency score (0.7-1.0 range)
-                import random
-
-                efficiency = 0.7 + (0.3 * random.random())
-
-                # Create energy record with actual timestamp
-                energy_record = {
-                    "id": energy_id,
-                    "building_id": building_id,
-                    "floor_id": floor_id,
-                    "space_id": space_id,
-                    "timestamp": timestamp,
-                    "consumption_kwh": consumption,
-                    "cost_usd": cost,
-                    "efficiency_score": efficiency,
-                    "usage_type": point.get("exactType", "sensor"),
-                    "source": "mapped_api",
-                }
-
-                # Check if record already exists using unique constraint fields
-                if self.db.energy_record_exists(energy_record):
-                    logger.debug(f"Energy record already exists, skipping: {energy_id}")
-                    continue
-
-                self.db.insert_energy_record(energy_record)
-                records_inserted += 1
-
-                logger.debug(
-                    f"Inserted energy record: {energy_id} ({power_watts}W -> {consumption:.4f} kWh for 30min interval)"
-                )
-
-            except Exception as e:
-                logger.error(f"Failed to process energy data point: {e}")
-                raise
+        try:
+            # Store/update point metadata
+            self.db.upsert_point(point, building_id, floor_id, space_id)
+            records_inserted += 1
+            
+            unit_name = point.get("unit", {}).get("name", "unknown") if point.get("unit") else "unknown"
+            logger.debug(f"Stored point {point['id']} ({point.get('name', 'unnamed')}) with unit: {unit_name}")
+            
+            # Store series data - handle case where series might be None or empty
+            series_data_list = point.get("series") or []
+            if series_data_list:
+                for series_data in series_data_list:
+                    try:
+                        if series_data:  # Check if series_data is not None
+                            self.db.upsert_point_series(point["id"], series_data)
+                            records_inserted += 1
+                            logger.debug(f"Stored series data for point {point['id']} at {series_data.get('timestamp', 'unknown time')}")
+                    except Exception as e:
+                        logger.error(f"Failed to store series data for point {point['id']}: {e}")
+                        # Don't raise, continue with other series data
+            else:
+                logger.debug(f"No series data available for point {point['id']}")
+            
+        except Exception as e:
+            logger.error(f"Failed to process sensor point {point.get('id', 'unknown')}: {e}")
+            raise
 
         return records_inserted
 

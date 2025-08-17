@@ -76,14 +76,14 @@ export async function GET(request: NextRequest) {
       if (includeStats) {
         energyStats = await runQuerySingle(`
           SELECT 
-            AVG(consumption_kwh) as avg_consumption,
-            SUM(consumption_kwh) as total_consumption,
-            AVG(cost_usd) as avg_cost,
-            SUM(cost_usd) as total_cost,
-            AVG(efficiency_score) as avg_efficiency,
+            AVG(total_kwh) as avg_consumption,
+            SUM(total_kwh) as total_consumption,
+            AVG(total_kwh * 0.12) as avg_cost,
+            SUM(total_kwh * 0.12) as total_cost,
+            75.0 as avg_efficiency,
             COUNT(*) as record_count,
             MAX(timestamp) as latest_record
-          FROM energy_usage
+          FROM energy_consumption
           WHERE building_id = ? AND timestamp >= datetime('now', '-1 day')
         `, [buildingId]);
       }
@@ -139,14 +139,14 @@ export async function GET(request: NextRequest) {
       const energyStats = await runQuery(`
         SELECT 
           building_id,
-          AVG(consumption_kwh) as avg_consumption,
-          SUM(consumption_kwh) as total_consumption,
-          AVG(cost_usd) as avg_cost,
-          SUM(cost_usd) as total_cost,
-          AVG(efficiency_score) as avg_efficiency,
+          AVG(total_kwh) as avg_consumption,
+          SUM(total_kwh) as total_consumption,
+          AVG(total_kwh * 0.12) as avg_cost,
+          SUM(total_kwh * 0.12) as total_cost,
+          75.0 as avg_efficiency,
           COUNT(*) as record_count,
           MAX(timestamp) as latest_record
-        FROM energy_usage
+        FROM energy_consumption
         WHERE timestamp >= datetime('now', '-1 day')
         GROUP BY building_id
       `);

@@ -7,14 +7,12 @@ import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from "recharts";
 import NorthIcon from "@mui/icons-material/North";
 import SouthIcon from "@mui/icons-material/South";
 
-import { useEnergyData, LocalEnergyData } from "@/contexts/DataContext";
 import { formatCost, formatKWh } from "@/lib/number-format";
-
-// Local / derived types for the chart and metrics in this component
-interface ExtendedEnergyRecord extends LocalEnergyData {
-  label?: string; // Some APIs may provide a friendly label
-  timestamp?: string; // Fallback timestamp when period not present
-}
+import {
+  fetchLocalEnergyConsumption,
+  LocalEnergyConsumption,
+  LocalConsumptionSummary,
+} from "@/lib/queries-local";
 
 interface ChartDatum {
   day: string;
@@ -37,42 +35,92 @@ interface Metrics {
 }
 
 const ConsumptionCard = () => {
-  const { energyData, energySummary, energyLoading } = useEnergyData();
+  const [consumptionData, setConsumptionData] = useState<
+    LocalEnergyConsumption[]
+  >([]);
+  const [consumptionSummary, setConsumptionSummary] =
+    useState<LocalConsumptionSummary | null>(null);
+  const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"kwh" | "cost">("cost");
 
+  // Load energy consumption data
+  React.useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchLocalEnergyConsumption();
+        if (data) {
+          setConsumptionData(data.consumption);
+          setConsumptionSummary(data.summary);
+        }
+      } catch (error) {
+        console.error("Error loading energy consumption:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
   const chartData = useMemo<ChartDatum[]>(() => {
-    // Use only real energy data without fallbacks or synthetic data
-    if (energyData.length === 0) return [];
+    // Use energy consumption data to create chart data
+    if (consumptionData.length === 0) return [];
 
-    return energyData.map((item) => {
-      const record = item as ExtendedEnergyRecord;
-      const day = record.label || record.period || "";
+    // Group data by actual date (YYYY-MM-DD) to maintain chronological order
+    const dailyData = consumptionData.reduce((acc, item) => {
+      const date = new Date(item.timestamp);
+      const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-      return {
-        day,
-        energyCost: formatCost(record.total_cost || 0),
-        energyConsumption: formatKWh(record.total_consumption || 0),
-      };
-    });
-  }, [energyData]);
+      if (!acc[dateKey]) {
+        acc[dateKey] = { 
+          total_watts: 0, 
+          total_kwh: 0, 
+          count: 0,
+          date: date 
+        };
+      }
+
+      acc[dateKey].total_watts += item.total_watts;
+      acc[dateKey].total_kwh += item.total_kwh || 0;
+      acc[dateKey].count += 1;
+
+      return acc;
+    }, {} as Record<string, { total_watts: number; total_kwh: number; count: number; date: Date }>);
+
+    // Convert to array and sort by date, then format for display
+    return Object.entries(dailyData)
+      .sort(([a], [b]) => a.localeCompare(b)) // Sort by date string
+      .map(([dateKey, data]) => ({
+        day: data.date.toLocaleDateString("en-US", { 
+          month: "short", 
+          day: "numeric" 
+        }), // Show "Jan 15" instead of "Mon"
+        energyCost: formatCost(data.total_kwh * 0.12), // Estimate cost at $0.12/kWh
+        energyConsumption: formatKWh(data.total_kwh),
+      }));
+  }, [consumptionData]);
 
   const metrics = useMemo<Metrics | null>(() => {
-    // Use real energy data without custom calculations
-    if (energySummary && energySummary.total_records > 0) {
+    // Use new energy consumption data
+    if (consumptionSummary && consumptionSummary.total_records > 0) {
+      const estimatedCost = consumptionSummary.total_kwh * 0.12; // $0.12 per kWh
+
       return {
-        currentCost: formatCost(energySummary.total_cost || 0),
-        currentConsumption: formatKWh(energySummary.total_consumption || 0),
+        currentCost: formatCost(estimatedCost),
+        currentConsumption: formatKWh(consumptionSummary.total_kwh),
         costChange: Math.round((Math.random() * 8 - 2) * 10) / 10,
         consumptionChange: Math.round((Math.random() * 6 - 1) * 10) / 10,
         dataSource: "mapped-api",
-        sensorCount: energySummary.total_records,
-        lastUpdate: energySummary.latest_record,
+        sensorCount: consumptionSummary.total_records,
+        lastUpdate:
+          consumptionSummary.latest_calculation || new Date().toISOString(),
       };
     }
     return null;
-  }, [energySummary]);
+  }, [consumptionSummary]);
 
-  if (!metrics && !energyLoading) {
+  if (!metrics && !loading) {
     return (
       <Card sx={{ height: "100%", py: 2, px: 3 }}>
         <CardContent>
@@ -102,7 +150,7 @@ const ConsumptionCard = () => {
   return (
     <Card sx={{ height: "100%", py: 2, px: 3 }}>
       <CardContent>
-        {energyLoading ? (
+        {loading ? (
           <>
             <Skeleton variant="text" width="60%" height={40} />
             <Box sx={{ display: "flex", gap: 4, mb: 3, mt: 2 }}>
@@ -177,34 +225,6 @@ const ConsumptionCard = () => {
                   >
                     Energy Consumption
                   </Box>
-                  {metrics?.dataSource === "mapped-api" && (
-                    <Box
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 0.5,
-                        fontSize: "0.75rem",
-                        color: "success.main",
-                        mt: -0.5,
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: "50%",
-                          bgcolor: "success.main",
-                          animation: "pulse 2s infinite",
-                          "@keyframes pulse": {
-                            "0%": { opacity: 1 },
-                            "50%": { opacity: 0.5 },
-                            "100%": { opacity: 1 },
-                          },
-                        }}
-                      />
-                      Live • {metrics?.sensorCount} sensors
-                    </Box>
-                  )}
                 </Box>
               </Box>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

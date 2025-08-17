@@ -90,19 +90,48 @@ CREATE TABLE IF NOT EXISTS spaces (
     FOREIGN KEY (building_id) REFERENCES buildings (id)
 );
 
--- Energy usage table - stores calculated/synced energy data
-CREATE TABLE IF NOT EXISTS energy_usage (
+
+-- Points table - stores sensor/data point information
+CREATE TABLE IF NOT EXISTS points (
+    id TEXT PRIMARY KEY,
+    building_id TEXT,
+    floor_id TEXT,
+    space_id TEXT,
+    name TEXT,
+    description TEXT,
+    exact_type TEXT,
+    unit_name TEXT,
+    sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (building_id) REFERENCES buildings (id),
+    FOREIGN KEY (floor_id) REFERENCES floors (id),
+    FOREIGN KEY (space_id) REFERENCES spaces (id)
+);
+
+-- Point series table - stores time-series data for points
+CREATE TABLE IF NOT EXISTS point_series (
+    id TEXT PRIMARY KEY,
+    point_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    float64_value REAL,
+    float32_value REAL,
+    string_value TEXT,
+    bool_value BOOLEAN,
+    sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (point_id) REFERENCES points (id)
+);
+
+-- Energy consumption aggregation table - calculated from watts sensors
+CREATE TABLE IF NOT EXISTS energy_consumption (
     id TEXT PRIMARY KEY,
     building_id TEXT NOT NULL,
     floor_id TEXT,
     space_id TEXT,
     timestamp TEXT NOT NULL,
-    consumption_kwh REAL,
-    cost_usd REAL,
-    efficiency_score REAL,
-    usage_type TEXT,
-    source TEXT DEFAULT 'calculated',
-    sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+    total_watts REAL NOT NULL,
+    total_kwh REAL,
+    calculation_timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
     
     FOREIGN KEY (building_id) REFERENCES buildings (id),
     FOREIGN KEY (floor_id) REFERENCES floors (id),
@@ -141,27 +170,25 @@ CREATE INDEX IF NOT EXISTS idx_spaces_floor ON spaces(floor_id);
 CREATE INDEX IF NOT EXISTS idx_spaces_building ON spaces(building_id);
 CREATE INDEX IF NOT EXISTS idx_spaces_mapping_key ON spaces(mapping_key);
 
--- Energy usage indexes
-CREATE INDEX IF NOT EXISTS idx_energy_building ON energy_usage(building_id);
-CREATE INDEX IF NOT EXISTS idx_energy_timestamp ON energy_usage(timestamp);
-CREATE INDEX IF NOT EXISTS idx_energy_building_time ON energy_usage(building_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_energy_source ON energy_usage(source);
+
+-- Points indexes
+CREATE INDEX IF NOT EXISTS idx_points_building ON points(building_id);
+CREATE INDEX IF NOT EXISTS idx_points_floor ON points(floor_id);
+CREATE INDEX IF NOT EXISTS idx_points_space ON points(space_id);
+CREATE INDEX IF NOT EXISTS idx_points_unit ON points(unit_name);
+CREATE INDEX IF NOT EXISTS idx_points_type ON points(exact_type);
+
+-- Point series indexes
+CREATE INDEX IF NOT EXISTS idx_series_point ON point_series(point_id);
+CREATE INDEX IF NOT EXISTS idx_series_timestamp ON point_series(timestamp);
+CREATE INDEX IF NOT EXISTS idx_series_point_time ON point_series(point_id, timestamp);
+
+-- Energy consumption indexes
+CREATE INDEX IF NOT EXISTS idx_consumption_building ON energy_consumption(building_id);
+CREATE INDEX IF NOT EXISTS idx_consumption_timestamp ON energy_consumption(timestamp);
+CREATE INDEX IF NOT EXISTS idx_consumption_building_time ON energy_consumption(building_id, timestamp);
 
 -- Sync status indexes
 CREATE INDEX IF NOT EXISTS idx_sync_status_type ON sync_status(sync_type, last_sync_timestamp);
 CREATE INDEX IF NOT EXISTS idx_sync_status_created ON sync_status(created_at);
 
--- =============================================================================
--- UNIQUE CONSTRAINTS
--- =============================================================================
-
--- Ensure unique energy records per hour per location/source combination
--- This will be created after potential deduplication in the application code
--- CREATE UNIQUE INDEX ux_energy_usage_unique_hour ON energy_usage (
---     building_id,
---     COALESCE(floor_id, '*'),
---     COALESCE(space_id, '*'),
---     timestamp,
---     usage_type,
---     source
--- );

@@ -22,7 +22,7 @@ class Database:
     def __init__(self):
         # Use the shared database from the data directory
         self.db_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "data", "energy_efficiency.sqlite"
+            os.path.dirname(__file__), "..", "data", "energy_efficiency.sqlite"
         )
         logger.info(f"Using database: {self.db_path}")
 
@@ -38,10 +38,25 @@ class Database:
 
         with self.get_connection() as conn:
             try:
+                # Apply pragmas to improve write performance. Note: Some pragmas are
+                # connection-scoped; applying here ensures faster bulk loads during init.
+                # WAL improves concurrency and reduces writer contention.
+                conn.execute("PRAGMA journal_mode=WAL;")
+                # NORMAL balances durability and performance; OFF is faster but risky.
+                conn.execute("PRAGMA synchronous=NORMAL;")
+                # Keep temporary data in memory for speed.
+                conn.execute("PRAGMA temp_store=MEMORY;")
+                # Negative value sets size in KB; here ~20 MB page cache.
+                conn.execute("PRAGMA cache_size=-20000;")
+                # Avoid immediate SQLITE_BUSY errors under contention.
+                conn.execute("PRAGMA busy_timeout=5000;")
+                # Ensure FK constraints are enforced (good data integrity; negligible cost).
+                conn.execute("PRAGMA foreign_keys=ON;")
+
                 # Use common schema loader
                 execute_schema_script(conn)
                 logger.info("Database initialized successfully with common schema")
-                
+
             except Exception as e:
                 logger.error(f"Failed to initialize database with common schema: {e}")
                 raise
@@ -61,16 +76,18 @@ class Database:
             current_time = datetime.now(timezone.utc).isoformat()
 
             # Log building data for debugging
-            logger.debug(f"Upserting building: {building.get('id')} - {building.get('name')}")
+            logger.debug(
+                f"Upserting building: {building.get('id')} - {building.get('name')}"
+            )
             logger.debug(f"Building keys: {list(building.keys())}")
-            
+
             # Extract nested data with GraphQL structure (with null safety)
             address = building.get("address") or {}
             geolocation = building.get("geolocation") or {}
             gross_area = building.get("grossArea") or {}
             rentable_area = building.get("rentableArea") or {}
             usable_area = building.get("usableArea") or {}
-            
+
             # Handle type array - convert list to JSON string
             type_array = building.get("type", [])
             type_array_str = ",".join(type_array) if type_array else None
@@ -113,11 +130,23 @@ class Database:
                     geolocation.get("latitude"),
                     geolocation.get("longitude"),
                     gross_area.get("quantity"),
-                    gross_area.get("unit", {}).get("name") if gross_area.get("unit") else None,
+                    (
+                        gross_area.get("unit", {}).get("name")
+                        if gross_area.get("unit")
+                        else None
+                    ),
                     rentable_area.get("quantity"),
-                    rentable_area.get("unit", {}).get("name") if rentable_area.get("unit") else None,
+                    (
+                        rentable_area.get("unit", {}).get("name")
+                        if rentable_area.get("unit")
+                        else None
+                    ),
                     usable_area.get("quantity"),
-                    usable_area.get("unit", {}).get("name") if usable_area.get("unit") else None,
+                    (
+                        usable_area.get("unit", {}).get("name")
+                        if usable_area.get("unit")
+                        else None
+                    ),
                     building.get("dateCreated", current_time),
                     building.get("dateUpdated", current_time),
                     current_time,
@@ -135,7 +164,7 @@ class Database:
             gross_area = floor.get("grossArea") or {}
             rentable_area = floor.get("rentableArea") or {}
             usable_area = floor.get("usableArea") or {}
-            
+
             # Handle type array
             type_array = floor.get("type", [])
             type_array_str = ",".join(type_array) if type_array else None
@@ -170,11 +199,23 @@ class Database:
                     floor.get("mappingKey"),
                     floor.get("connectedDataSourceId"),
                     gross_area.get("quantity"),
-                    gross_area.get("unit", {}).get("name") if gross_area.get("unit") else None,
+                    (
+                        gross_area.get("unit", {}).get("name")
+                        if gross_area.get("unit")
+                        else None
+                    ),
                     rentable_area.get("quantity"),
-                    rentable_area.get("unit", {}).get("name") if rentable_area.get("unit") else None,
+                    (
+                        rentable_area.get("unit", {}).get("name")
+                        if rentable_area.get("unit")
+                        else None
+                    ),
                     usable_area.get("quantity"),
-                    usable_area.get("unit", {}).get("name") if usable_area.get("unit") else None,
+                    (
+                        usable_area.get("unit", {}).get("name")
+                        if usable_area.get("unit")
+                        else None
+                    ),
                     type_array_str,
                     floor.get("dateCreated", current_time),
                     floor.get("dateUpdated", current_time),
@@ -228,65 +269,6 @@ class Database:
                 ),
             )
 
-    def energy_record_exists(self, record: Dict) -> bool:
-        """Check if energy record exists using unique constraint fields"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT COUNT(*) FROM energy_usage 
-                WHERE building_id = ? 
-                AND COALESCE(floor_id, '*') = COALESCE(?, '*') 
-                AND COALESCE(space_id, '*') = COALESCE(?, '*')
-                AND timestamp = ?
-                AND usage_type = ?
-                AND source = ?
-                """,
-                (
-                    record["building_id"],
-                    record.get("floor_id"),
-                    record.get("space_id"),
-                    record["timestamp"].isoformat() if isinstance(record["timestamp"], datetime) else record["timestamp"],
-                    record["usage_type"],
-                    record["source"]
-                )
-            )
-            return cursor.fetchone()[0] > 0
-
-    def insert_energy_record(self, record: Dict):
-        """Insert energy usage record"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-
-            current_time = datetime.now(timezone.utc).isoformat()
-            timestamp = (
-                record["timestamp"].isoformat()
-                if isinstance(record["timestamp"], datetime)
-                else record["timestamp"]
-            )
-
-            cursor.execute(
-                """
-                INSERT INTO energy_usage (
-                    id, building_id, floor_id, space_id, timestamp,
-                    consumption_kwh, cost_usd, efficiency_score,
-                    usage_type, source, sync_timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    record["id"],
-                    record["building_id"],
-                    record.get("floor_id"),
-                    record.get("space_id"),
-                    timestamp,
-                    record["consumption_kwh"],
-                    record["cost_usd"],
-                    record["efficiency_score"],
-                    record["usage_type"],
-                    record["source"],
-                    current_time,
-                ),
-            )
 
     def get_last_sync_timestamp(self, sync_type: str) -> Optional[datetime]:
         """Get the last sync timestamp for a given sync type"""
@@ -349,13 +331,190 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def upsert_point(
+        self,
+        point: Dict,
+        building_id: str,
+        floor_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+    ):
+        """Insert or update sensor point record"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            current_time = datetime.now(timezone.utc).isoformat()
+
+            cursor.execute(
+                """
+                INSERT INTO points (
+                    id, building_id, floor_id, space_id, name, description, 
+                    exact_type, unit_name, sync_timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    building_id = excluded.building_id,
+                    floor_id = excluded.floor_id,
+                    space_id = excluded.space_id,
+                    name = excluded.name,
+                    description = excluded.description,
+                    exact_type = excluded.exact_type,
+                    unit_name = excluded.unit_name,
+                    sync_timestamp = excluded.sync_timestamp
+            """,
+                (
+                    point["id"],
+                    building_id,
+                    floor_id,
+                    space_id,
+                    point.get("name"),
+                    point.get("description"),
+                    point.get("exactType"),
+                    point.get("unit", {}).get("name") if point.get("unit") else None,
+                    current_time,
+                ),
+            )
+
+    def upsert_point_series(self, point_id: str, series_data: Dict):
+        """Insert or update point series data"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            current_time = datetime.now(timezone.utc).isoformat()
+
+            # Generate unique ID for this series entry
+            series_id = f"{point_id}_{series_data.get('timestamp', current_time)}"
+
+            value = series_data.get("value", {})
+
+            cursor.execute(
+                """
+                INSERT INTO point_series (
+                    id, point_id, timestamp, float64_value, float32_value, 
+                    string_value, bool_value, sync_timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    point_id = excluded.point_id,
+                    timestamp = excluded.timestamp,
+                    float64_value = excluded.float64_value,
+                    float32_value = excluded.float32_value,
+                    string_value = excluded.string_value,
+                    bool_value = excluded.bool_value,
+                    sync_timestamp = excluded.sync_timestamp
+            """,
+                (
+                    series_id,
+                    point_id,
+                    series_data.get("timestamp", current_time),
+                    value.get("float64Value"),
+                    value.get("float32Value"),
+                    value.get("stringValue"),
+                    value.get("boolValue"),
+                    current_time,
+                ),
+            )
+
+    def calculate_and_store_energy_consumption(self):
+        """Calculate energy consumption from watts sensors and store aggregated data"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            logger.info("Calculating energy consumption from watts sensors...")
+
+            # Get all watts sensors with their latest readings
+            cursor.execute(
+                """
+                SELECT 
+                    p.building_id,
+                    p.floor_id,
+                    p.space_id,
+                    ps.timestamp,
+                    COALESCE(ps.float64_value, ps.float32_value, 0) as watt_value
+                FROM points p
+                JOIN point_series ps ON p.id = ps.point_id
+                WHERE p.unit_name = 'Watt'
+                  AND (ps.float64_value IS NOT NULL OR ps.float32_value IS NOT NULL)
+                ORDER BY p.building_id, p.floor_id, p.space_id, ps.timestamp
+            """
+            )
+
+            watts_data = cursor.fetchall()
+
+            if not watts_data:
+                logger.info("No watts sensor data found")
+                return 0
+
+            # Group by location and timestamp, sum watts
+            consumption_map = {}
+
+            for row in watts_data:
+                building_id, floor_id, space_id, timestamp, watt_value = row
+                key = f"{building_id}_{floor_id or 'null'}_{space_id or 'null'}_{timestamp}"
+
+                if key in consumption_map:
+                    consumption_map[key]["total_watts"] += watt_value
+                else:
+                    consumption_map[key] = {
+                        "building_id": building_id,
+                        "floor_id": floor_id,
+                        "space_id": space_id,
+                        "timestamp": timestamp,
+                        "total_watts": watt_value,
+                    }
+
+            # Store calculated consumption data
+            records_inserted = 0
+            current_time = datetime.now(timezone.utc).isoformat()
+
+            for key, consumption in consumption_map.items():
+                # Convert watts to kWh (simplified - using instant reading)
+                total_kwh = (
+                    consumption["total_watts"] / 1000
+                )  # Basic conversion for demonstration
+
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO energy_consumption (
+                        id, building_id, floor_id, space_id, timestamp, 
+                        total_watts, total_kwh, calculation_timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        key,
+                        consumption["building_id"],
+                        consumption["floor_id"],
+                        consumption["space_id"],
+                        consumption["timestamp"],
+                        consumption["total_watts"],
+                        total_kwh,
+                        current_time,
+                    ),
+                )
+                records_inserted += 1
+
+            conn.commit()
+            logger.info(f"Stored {records_inserted} energy consumption records")
+            return records_inserted
+
+    def get_watts_sensors_count(self) -> int:
+        """Get count of watts sensors"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM points WHERE unit_name = 'Watt'")
+            return cursor.fetchone()[0]
+
     def get_database_stats(self) -> Dict[str, int]:
         """Get database statistics"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
             stats = {}
-            for table in ["buildings", "floors", "spaces", "energy_usage"]:
+            for table in [
+                "buildings",
+                "floors",
+                "spaces",
+                "points",
+                "point_series",
+                "energy_consumption",
+            ]:
                 cursor.execute(f"SELECT COUNT(*) FROM {table}")
                 stats[table] = cursor.fetchone()[0]
 

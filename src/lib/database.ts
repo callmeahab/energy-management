@@ -57,75 +57,12 @@ const createTables = async (database: sqlite3.Database): Promise<void> => {
 
   try {
     await executeSchemaNode(database);
-    await ensureEnergyUsageUniqueIndex(database);
   } catch (error) {
     console.error("Failed to execute common schema:", error);
     throw error;
   }
 };
 
-/**
- * Attempt to create uniqueness constraint for hourly energy records.
- * If duplicates exist (legacy data), deduplicate then retry. Fails silently after second attempt.
- */
-async function ensureEnergyUsageUniqueIndex(database: sqlite3.Database) {
-  const createIndex = () =>
-    new Promise<void>((resolve, reject) => {
-      database.exec(
-        `CREATE UNIQUE INDEX IF NOT EXISTS ux_energy_usage_unique_hour
-         ON energy_usage (
-           building_id,
-           COALESCE(floor_id,'*'),
-           COALESCE(space_id,'*'),
-           timestamp,
-           usage_type,
-           source
-         );`,
-        (err) => (err ? reject(err) : resolve())
-      );
-    });
-
-  try {
-    await createIndex();
-  } catch (err: unknown) {
-    interface SqliteErr {
-      code?: string;
-    }
-    const code = (err as SqliteErr)?.code;
-    if (code === "SQLITE_CONSTRAINT") {
-      console.warn(
-        "Duplicate energy_usage rows detected; performing deduplication before creating unique index"
-      );
-      // Deduplicate keeping the earliest rowid for each uniqueness grouping (COALESCE semantics replicated via IFNULL)
-      await new Promise<void>((resolve, reject) => {
-        database.exec(
-          `DELETE FROM energy_usage
-           WHERE rowid NOT IN (
-             SELECT MIN(rowid) FROM energy_usage
-             GROUP BY building_id, IFNULL(floor_id,'*'), IFNULL(space_id,'*'), timestamp, usage_type, source
-           );`,
-          (err) => (err ? reject(err) : resolve())
-        );
-      });
-      try {
-        await createIndex();
-        console.log(
-          "Unique index ux_energy_usage_unique_hour created after deduplication"
-        );
-      } catch (finalErr) {
-        console.warn(
-          "Failed to create ux_energy_usage_unique_hour after dedup; continuing without enforced uniqueness:",
-          finalErr
-        );
-      }
-    } else {
-      console.warn(
-        "Unexpected error creating ux_energy_usage_unique_hour; continuing without enforced uniqueness:",
-        err
-      );
-    }
-  }
-}
 
 export const getDatabase = (): sqlite3.Database => {
   if (!db)

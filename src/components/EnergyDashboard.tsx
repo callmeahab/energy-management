@@ -22,7 +22,7 @@ import { useEnergyData, useBuildingData } from "@/contexts/DataContext";
 import ConsumptionCard from "./ConsumptionCard";
 import CostSavingChart from "./CostSavingChart";
 import AlertsCard from "./AlertsCard";
-import CombinedEfficiencyCard from "./CombinedEfficiencyCard";
+import EfficiencyCard from "./EfficiencyCard";
 import BuildingFloorPlan from "./BuildingFloorPlan";
 import PropertiesMapDrawer from "./PropertiesMapDrawer";
 
@@ -54,24 +54,18 @@ const Main = styled("main", { shouldForwardProp: (prop) => prop !== "open" })<{
 }));
 
 const EnergyDashboard = () => {
-  const { currentTimeRange, refreshEnergyData, energySummary } =
-    useEnergyData();
+  const { currentTimeRange, refreshEnergyData } = useEnergyData();
   const { buildings } = useBuildingData();
-  const [activeTab, setActiveTab] = useState(0);
   const [propertiesDrawerOpen, setPropertiesDrawerOpen] = useState(false);
 
   const handleTimeRangeChange = (range: TimeRange) => {
     refreshEnergyData(range);
   };
 
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-    setActiveTab(newValue);
-  };
-
   return (
     <Box sx={{ display: "flex" }}>
       <Main open={propertiesDrawerOpen}>
-        <Container maxWidth="xl" sx={{ py: 4 }}>
+        <Container maxWidth={false} sx={{ py: 4, maxWidth: "100vw" }}>
           <Box
             sx={{
               display: "flex",
@@ -121,56 +115,6 @@ const EnergyDashboard = () => {
             </Box>
 
             <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-              {energySummary && energySummary.total_records > 0 && (
-                <Box
-                  sx={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-end",
-                    mr: 2,
-                  }}
-                >
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 0.5,
-                      fontSize: "0.8rem",
-                      color: "success.main",
-                      fontWeight: 600,
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: "50%",
-                        bgcolor: "success.main",
-                        animation: "pulse 2s infinite",
-                        "@keyframes pulse": {
-                          "0%": { opacity: 1 },
-                          "50%": { opacity: 0.5 },
-                          "100%": { opacity: 1 },
-                        },
-                      }}
-                    />
-                    {energySummary.total_records} sensors live
-                  </Box>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontSize: "0.7rem",
-                      color: "text.secondary",
-                    }}
-                  >
-                    Last sync:{" "}
-                    {new Date(energySummary.latest_record).toLocaleString()}
-                  </Typography>
-                </Box>
-              )}
-
-              {/* Alerts moved from dropdown to a dedicated dashboard card */}
-
               <IconButton
                 onClick={() => {}}
                 sx={{
@@ -245,7 +189,7 @@ const EnergyDashboard = () => {
                 xl: propertiesDrawerOpen ? 12 : 12,
               }}
             >
-              <CombinedEfficiencyCard />
+              <EfficiencyCard drawerOpen={propertiesDrawerOpen} />
             </Grid>
           </Grid>
 
@@ -253,19 +197,18 @@ const EnergyDashboard = () => {
             <Card>
               <CardContent>
                 <Typography variant="h6" gutterBottom>
-                  Building Floor Plan
+                  Dashboard Sections
                 </Typography>
-                <Tabs
-                  value={activeTab}
-                  onChange={handleTabChange}
-                  sx={{ mb: 2 }}
-                >
-                  <Tab label="Lobby" />
-                  <Tab label="Floor 1" />
-                  <Tab label="Floor 2" />
-                  <Tab label="Floor 3" />
-                </Tabs>
-                <BuildingFloorPlan floorId={activeTab} />
+
+                <Box>
+                  <Tabs value={0} sx={{ mb: 2 }}>
+                    <Tab label="Lobby" />
+                    <Tab label="Floor 1" />
+                    <Tab label="Floor 2" />
+                    <Tab label="Floor 3" />
+                  </Tabs>
+                  <BuildingFloorPlan floorId={0} />
+                </Box>
               </CardContent>
             </Card>
           </Box>
