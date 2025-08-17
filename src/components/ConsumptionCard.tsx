@@ -13,6 +13,8 @@ import {
   LocalEnergyConsumption,
   LocalConsumptionSummary,
 } from "@/lib/queries-local";
+import { useEnergyData } from "@/contexts/DataContext";
+import { getTimeRangeDuration } from "@/lib/time-range-utils";
 
 interface ChartDatum {
   day: string;
@@ -35,6 +37,7 @@ interface Metrics {
 }
 
 const ConsumptionCard = () => {
+  const { currentTimeRange } = useEnergyData();
   const [consumptionData, setConsumptionData] = useState<
     LocalEnergyConsumption[]
   >([]);
@@ -48,7 +51,16 @@ const ConsumptionCard = () => {
     const loadData = async () => {
       try {
         setLoading(true);
-        const data = await fetchLocalEnergyConsumption();
+        const now = new Date();
+        const durationMs = getTimeRangeDuration(currentTimeRange);
+        const startTime = new Date(now.getTime() - durationMs).toISOString();
+        const endTime = now.toISOString();
+
+        const data = await fetchLocalEnergyConsumption(
+          undefined,
+          startTime,
+          endTime
+        );
         if (data) {
           setConsumptionData(data.consumption);
           setConsumptionSummary(data.summary);
@@ -61,45 +73,95 @@ const ConsumptionCard = () => {
     };
 
     loadData();
-  }, []);
+  }, [currentTimeRange]);
 
   const chartData = useMemo<ChartDatum[]>(() => {
-    // Use energy consumption data to create chart data
     if (consumptionData.length === 0) return [];
 
-    // Group data by actual date (YYYY-MM-DD) to maintain chronological order
-    const dailyData = consumptionData.reduce((acc, item) => {
-      const date = new Date(item.timestamp);
-      const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+    // Helpers to derive grouping keys and labels
+    const getHourKey = (d: Date) => {
+      const rounded = new Date(d);
+      rounded.setMinutes(0, 0, 0);
+      return rounded.toISOString();
+    };
+    const getHourLabel = (d: Date) =>
+      d.toLocaleTimeString("en-US", { hour: "numeric", hour12: true });
 
-      if (!acc[dateKey]) {
-        acc[dateKey] = { 
-          total_watts: 0, 
-          total_kwh: 0, 
-          count: 0,
-          date: date 
-        };
+    const getDayKey = (d: Date) => d.toISOString().split("T")[0]; // YYYY-MM-DD
+    const getDayLabel = (d: Date) =>
+      d.toLocaleDateString("en-US", { weekday: "short" });
+
+    const getWeekStart = (d: Date) => {
+      const date = new Date(d);
+      // Start weeks on Monday
+      const day = (date.getDay() + 6) % 7; // 0 = Monday
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - day);
+      return date;
+    };
+    const getWeekKey = (d: Date) => getWeekStart(d).toISOString().split("T")[0];
+    const getWeekLabel = (d: Date) =>
+      `Week of ${getWeekStart(d).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      })}`;
+
+    type Accum = Record<
+      string,
+      {
+        total_kwh: number;
+        total_watts: number;
+        count: number;
+        label: string;
+        orderKey: string;
+      }
+    >;
+
+    const grouped: Accum = {};
+
+    for (const item of consumptionData) {
+      const date = new Date(item.timestamp);
+      let key: string;
+      let label: string;
+      let orderKey: string;
+
+      if (currentTimeRange === "day") {
+        key = getHourKey(date);
+        label = getHourLabel(new Date(key));
+        orderKey = key;
+      } else if (currentTimeRange === "week") {
+        key = getDayKey(date);
+        label = getDayLabel(date);
+        orderKey = key;
+      } else {
+        // month
+        key = getWeekKey(date);
+        label = getWeekLabel(date);
+        orderKey = key;
       }
 
-      acc[dateKey].total_watts += item.total_watts;
-      acc[dateKey].total_kwh += item.total_kwh || 0;
-      acc[dateKey].count += 1;
+      if (!grouped[key]) {
+        grouped[key] = {
+          total_kwh: 0,
+          total_watts: 0,
+          count: 0,
+          label,
+          orderKey,
+        };
+      }
+      grouped[key].total_kwh += item.total_kwh || 0;
+      grouped[key].total_watts += item.total_watts || 0;
+      grouped[key].count += 1;
+    }
 
-      return acc;
-    }, {} as Record<string, { total_watts: number; total_kwh: number; count: number; date: Date }>);
-
-    // Convert to array and sort by date, then format for display
-    return Object.entries(dailyData)
-      .sort(([a], [b]) => a.localeCompare(b)) // Sort by date string
-      .map(([dateKey, data]) => ({
-        day: data.date.toLocaleDateString("en-US", { 
-          month: "short", 
-          day: "numeric" 
-        }), // Show "Jan 15" instead of "Mon"
-        energyCost: formatCost(data.total_kwh * 0.12), // Estimate cost at $0.12/kWh
-        energyConsumption: formatKWh(data.total_kwh),
+    return Object.values(grouped)
+      .sort((a, b) => a.orderKey.localeCompare(b.orderKey))
+      .map((g) => ({
+        day: g.label,
+        energyCost: formatCost(g.total_kwh * 0.12),
+        energyConsumption: formatKWh(g.total_kwh),
       }));
-  }, [consumptionData]);
+  }, [consumptionData, currentTimeRange]);
 
   const metrics = useMemo<Metrics | null>(() => {
     // Use new energy consumption data
