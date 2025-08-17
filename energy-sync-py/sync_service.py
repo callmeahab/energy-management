@@ -755,23 +755,29 @@ class SyncService:
             )
 
             # Store series data - handle case where series might be None or empty
+            # Only persist historical series for power data (unit == 'Watt') as requested
             series_data_list = point.get("series") or []
-            if series_data_list:
-                for series_data in series_data_list:
-                    try:
-                        if series_data:  # Check if series_data is not None
-                            self.db.upsert_point_series(point["id"], series_data)
-                            records_inserted += 1
-                            logger.debug(
-                                f"Stored series data for point {point['id']} at {series_data.get('timestamp', 'unknown time')}"
+            if unit_name and unit_name.lower() == "watt":
+                if series_data_list:
+                    for series_data in series_data_list:
+                        try:
+                            if series_data:  # Check if series_data is not None
+                                self.db.upsert_point_series(point["id"], series_data)
+                                records_inserted += 1
+                                logger.debug(
+                                    f"Stored series data for point {point['id']} at {series_data.get('timestamp', 'unknown time')}"
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to store series data for point {point['id']}: {e}"
                             )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to store series data for point {point['id']}: {e}"
-                        )
-                        # Don't raise, continue with other series data
+                            # Don't raise, continue with other series data
+                else:
+                    logger.debug(f"No series data available for point {point['id']}")
             else:
-                logger.debug(f"No series data available for point {point['id']}")
+                logger.debug(
+                    f"Skipping series for point {point['id']} due to non-Watt unit: {unit_name}"
+                )
 
         except Exception as e:
             logger.error(
