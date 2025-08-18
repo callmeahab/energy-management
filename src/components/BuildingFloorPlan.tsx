@@ -1,56 +1,92 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { Box, Typography, Card, Switch, FormControlLabel, Chip } from '@mui/material';
-import { useQuery } from '@apollo/client';
-import { GET_BUILDINGS, GET_FLOORS } from '@/lib/queries';
-import { Building, Floor as ApiFloor, Space } from '@/types/energy';
+import React from "react";
+import {
+  Box,
+  Typography,
+  Card,
+  Switch,
+  FormControlLabel,
+  Chip,
+} from "@mui/material";
+import { useQuery } from "@apollo/client";
+import { GET_BUILDINGS, GET_FLOORS } from "@/lib/queries";
+import { Building, Floor as ApiFloor, Space } from "@/types/energy";
 
 interface BuildingFloorPlanProps {
   floorId: number;
 }
 
-// Removed mock data - component now only displays real building/floor data
+type DataSource = "mapped-api" | "floors" | "buildings";
 
-const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
-  const { data: buildingsData, loading: buildingsLoading, error: buildingsError } = useQuery(GET_BUILDINGS, {
-    errorPolicy: 'ignore'
-  });
+interface FloorRoom {
+  id: string;
+  name: string;
+  temperature: number;
+  area: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
-  const { data: floorsData, loading: floorsLoading, error: floorsError } = useQuery(GET_FLOORS, {
-    errorPolicy: 'ignore'
+interface CurrentFloorView {
+  id: number;
+  name: string;
+  rooms: FloorRoom[];
+  utilization: { name: string; percentage: number }[];
+  spaceUtilization: { name: string; percentage: number }[];
+}
+
+const BuildingFloorPlan: React.FC<BuildingFloorPlanProps> = ({ floorId }) => {
+  const { data: buildingsData } = useQuery<{ buildings: Building[] }>(
+    GET_BUILDINGS,
+    {
+      errorPolicy: "ignore",
+    }
+  );
+
+  const { data: floorsData } = useQuery<{ floors: ApiFloor[] }>(GET_FLOORS, {
+    errorPolicy: "ignore",
   });
 
   // Determine which data to use - only real data
-  const loading = buildingsLoading || floorsLoading;
-  const error = buildingsError || floorsError;
-  
-  let currentFloor = null;
-  let dataSource = 'mapped-api';
-  
+
+  let currentFloor: CurrentFloorView | null = null;
+  let dataSource: DataSource = "mapped-api";
+
   // Use real floor data if available
-  if (floorsData?.floors && Array.isArray(floorsData.floors) && floorsData.floors.length > floorId) {
+  if (
+    floorsData?.floors &&
+    Array.isArray(floorsData.floors) &&
+    floorsData.floors.length > floorId
+  ) {
     const realFloor = floorsData.floors[floorId];
     if (realFloor) {
       currentFloor = {
         id: floorId,
         name: realFloor.name || `Floor ${floorId + 1}`,
-        rooms: realFloor.spaces?.map((space: Space, index: number) => ({
-          id: space.id,
-          name: space.name || space.description || `Space ${index + 1}`,
-          temperature: 70 + Math.random() * 15, // Mock temperature
-          area: 10 + Math.random() * 20, // Mock area
-          x: (index % 3) * 150 + 10,
-          y: Math.floor(index / 3) * 100 + 10,
-          width: 140,
-          height: 90
-        })) || [],
+        rooms:
+          realFloor.spaces?.map((space: Space, index: number) => ({
+            id: space.id,
+            name: space.name || space.description || `Space ${index + 1}`,
+            temperature: 70 + Math.random() * 15, // Mock temperature
+            area: 10 + Math.random() * 20, // Mock area
+            x: (index % 3) * 150 + 10,
+            y: Math.floor(index / 3) * 100 + 10,
+            width: 140,
+            height: 90,
+          })) || [],
         utilization: [],
-        spaceUtilization: []
+        spaceUtilization: [],
       };
-      dataSource = 'floors';
+      dataSource = "floors";
     }
-  } else if (buildingsData?.buildings && Array.isArray(buildingsData.buildings) && buildingsData.buildings.length > 0) {
+  } else if (
+    buildingsData?.buildings &&
+    Array.isArray(buildingsData.buildings) &&
+    buildingsData.buildings.length > 0
+  ) {
     // Use building floor data if available
     const building = buildingsData.buildings[0]; // Use first building
     if (building.floors && building.floors.length > floorId) {
@@ -58,27 +94,37 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
       currentFloor = {
         id: floorId,
         name: realFloor.name || realFloor.description || `Floor ${floorId + 1}`,
-        rooms: realFloor.spaces?.map((space: Space, index: number) => ({
-          id: space.id,
-          name: space.name || space.description || `Space ${index + 1}`,
-          temperature: 70 + Math.random() * 15, // Mock temperature
-          area: 10 + Math.random() * 20, // Mock area
-          x: (index % 3) * 150 + 10,
-          y: Math.floor(index / 3) * 100 + 10,
-          width: 140,
-          height: 90
-        })) || [],
+        rooms:
+          realFloor.spaces?.map((space: Space, index: number) => ({
+            id: space.id,
+            name: space.name || space.description || `Space ${index + 1}`,
+            temperature: 70 + Math.random() * 15, // Mock temperature
+            area: 10 + Math.random() * 20, // Mock area
+            x: (index % 3) * 150 + 10,
+            y: Math.floor(index / 3) * 100 + 10,
+            width: 140,
+            height: 90,
+          })) || [],
         utilization: [],
-        spaceUtilization: []
+        spaceUtilization: [],
       };
-      dataSource = 'buildings';
+      dataSource = "buildings";
     }
   }
-  
+
   // Return early if no floor data available
   if (!currentFloor) {
     return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 400, textAlign: 'center' }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 400,
+          textAlign: "center",
+        }}
+      >
         <Typography variant="h6" color="text.secondary" gutterBottom>
           No Floor Plan Available
         </Typography>
@@ -93,15 +139,22 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
   const peopleCount = 144;
 
   const getRoomColor = (temperature: number) => {
-    if (temperature > 80) return '#ffcdd2'; // Light red
-    if (temperature > 75) return '#fff3e0'; // Light orange
-    if (temperature > 70) return '#f3e5f5'; // Light purple
-    return '#e8f5e8'; // Light green
+    if (temperature > 80) return "#ffcdd2"; // Light red
+    if (temperature > 75) return "#fff3e0"; // Light orange
+    if (temperature > 70) return "#f3e5f5"; // Light purple
+    return "#e8f5e8"; // Light green
   };
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          mb: 3,
+        }}
+      >
         <Box>
           <FormControlLabel
             control={<Switch defaultChecked />}
@@ -109,8 +162,8 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             sx={{ mb: 2 }}
           />
         </Box>
-        <Box sx={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
-          <Box sx={{ textAlign: 'center' }}>
+        <Box sx={{ display: "flex", gap: 4, alignItems: "flex-start" }}>
+          <Box sx={{ textAlign: "center" }}>
             <Typography variant="h3" color="primary">
               {occupancyPercentage}%
             </Typography>
@@ -119,7 +172,7 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             </Typography>
             <Chip label="LIVE" color="error" size="small" sx={{ mt: 1 }} />
           </Box>
-          <Box sx={{ textAlign: 'center' }}>
+          <Box sx={{ textAlign: "center" }}>
             <Typography variant="h3" color="primary">
               {peopleCount}
             </Typography>
@@ -128,15 +181,17 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             </Typography>
             <Chip label="LIVE" color="error" size="small" sx={{ mt: 1 }} />
           </Box>
-          <Box sx={{ textAlign: 'center' }}>
+          <Box sx={{ textAlign: "center" }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Chip 
+              <Chip
                 label={
-                  dataSource === 'floors' ? `Floor Data` :
-                  dataSource === 'buildings' ? `Building Data` :
-                  "Mapped.com API"
-                } 
-                size="small" 
+                  dataSource === "floors"
+                    ? `Floor Data`
+                    : dataSource === "buildings"
+                    ? `Building Data`
+                    : "Mapped.com API"
+                }
+                size="small"
                 color="primary"
                 variant="outlined"
               />
@@ -162,9 +217,11 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
         </Box>
       </Box>
 
-      <Box sx={{ display: 'flex', gap: 4 }}>
+      <Box sx={{ display: "flex", gap: 4 }}>
         <Box sx={{ flex: 1 }}>
-          <Card sx={{ p: 2, height: 400, position: 'relative', overflow: 'hidden' }}>
+          <Card
+            sx={{ p: 2, height: 400, position: "relative", overflow: "hidden" }}
+          >
             <svg width="100%" height="100%" viewBox="0 0 450 270">
               {currentFloor.rooms.map((room) => (
                 <g key={room.id}>
@@ -202,7 +259,8 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
                     fontWeight="bold"
                     fill="#1976d2"
                   >
-                    {room.temperature}°F / {Math.round((room.temperature - 32) * 5/9)}°C
+                    {room.temperature}°F /{" "}
+                    {Math.round(((room.temperature - 32) * 5) / 9)}°C
                   </text>
                 </g>
               ))}
@@ -215,11 +273,16 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             <Typography variant="h6" gutterBottom>
               🏗️ Space utilization
             </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
               {currentFloor.spaceUtilization.map((item, index) => (
-                <Box key={index} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Box
+                  key={index}
+                  sx={{ display: "flex", justifyContent: "space-between" }}
+                >
                   <Typography variant="body2">{item.name}</Typography>
-                  <Typography variant="body2" fontWeight="medium">{item.percentage}%</Typography>
+                  <Typography variant="body2" fontWeight="medium">
+                    {item.percentage}%
+                  </Typography>
                 </Box>
               ))}
             </Box>
@@ -229,25 +292,34 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             <Typography variant="h6" gutterBottom>
               🔢 Floor utilization rankings
             </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
               {currentFloor.utilization.map((item, index) => (
-                <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Box sx={{ 
-                    width: 24, 
-                    height: 24, 
-                    borderRadius: '50%', 
-                    backgroundColor: 'primary.main',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '12px',
-                    fontWeight: 'bold'
-                  }}>
+                <Box
+                  key={index}
+                  sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                >
+                  <Box
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: "50%",
+                      backgroundColor: "primary.main",
+                      color: "white",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                    }}
+                  >
                     {index + 1}
                   </Box>
-                  <Typography variant="body2" sx={{ flex: 1 }}>{item.name}</Typography>
-                  <Typography variant="body2" fontWeight="medium">{item.percentage}%</Typography>
+                  <Typography variant="body2" sx={{ flex: 1 }}>
+                    {item.name}
+                  </Typography>
+                  <Typography variant="body2" fontWeight="medium">
+                    {item.percentage}%
+                  </Typography>
                 </Box>
               ))}
             </Box>
@@ -257,33 +329,59 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             <Typography variant="h6" gutterBottom>
               💡 Energy usage inefficiency
             </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              <Box sx={{ display: "flex", justifyContent: "space-between" }}>
                 <Typography variant="body2">Conference room - Big</Typography>
-                <Typography variant="body2" fontWeight="medium">300 kWh</Typography>
+                <Typography variant="body2" fontWeight="medium">
+                  300 kWh
+                </Typography>
               </Box>
               <Typography variant="caption" color="text.secondary">
                 High energy draw, often left on
               </Typography>
-              <Box sx={{ height: 2, backgroundColor: 'error.main', borderRadius: 1, mb: 2 }} />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Box
+                sx={{
+                  height: 2,
+                  backgroundColor: "error.main",
+                  borderRadius: 1,
+                  mb: 2,
+                }}
+              />
+
+              <Box sx={{ display: "flex", justifyContent: "space-between" }}>
                 <Typography variant="body2">Conference room - Small</Typography>
-                <Typography variant="body2" fontWeight="medium">244 kWh</Typography>
+                <Typography variant="body2" fontWeight="medium">
+                  244 kWh
+                </Typography>
               </Box>
               <Typography variant="caption" color="text.secondary">
                 Constant cycling poor sealing, older model
               </Typography>
-              <Box sx={{ height: 2, backgroundColor: 'warning.main', borderRadius: 1, mb: 2 }} />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Box
+                sx={{
+                  height: 2,
+                  backgroundColor: "warning.main",
+                  borderRadius: 1,
+                  mb: 2,
+                }}
+              />
+
+              <Box sx={{ display: "flex", justifyContent: "space-between" }}>
                 <Typography variant="body2">Office 1</Typography>
-                <Typography variant="body2" fontWeight="medium">195 kWh</Typography>
+                <Typography variant="body2" fontWeight="medium">
+                  195 kWh
+                </Typography>
               </Box>
               <Typography variant="caption" color="text.secondary">
                 Poor insulation, long runtime
               </Typography>
-              <Box sx={{ height: 2, backgroundColor: 'warning.main', borderRadius: 1 }} />
+              <Box
+                sx={{
+                  height: 2,
+                  backgroundColor: "warning.main",
+                  borderRadius: 1,
+                }}
+              />
             </Box>
           </Box>
         </Box>
@@ -293,11 +391,11 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
         <Typography variant="h6" gutterBottom>
           📊 Consumption
         </Typography>
-        <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+        <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
           <Typography variant="body2">kWh</Typography>
           <Typography variant="body2">Cost</Typography>
         </Box>
-        <Box sx={{ display: 'flex', gap: 4 }}>
+        <Box sx={{ display: "flex", gap: 4 }}>
           <Box>
             <Typography variant="h4" color="primary">
               $8,028
@@ -317,14 +415,28 @@ const BuildingFloorPlan = ({ floorId }: BuildingFloorPlanProps) => {
             <Chip label="↑1.8%" size="small" color="success" sx={{ mt: 0.5 }} />
           </Box>
         </Box>
-        
-        <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box sx={{ width: 12, height: 12, backgroundColor: '#ff9800', borderRadius: 1 }} />
+
+        <Box sx={{ display: "flex", gap: 2, mt: 2 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                backgroundColor: "#ff9800",
+                borderRadius: 1,
+              }}
+            />
             <Typography variant="body2">Energy cost</Typography>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box sx={{ width: 12, height: 12, backgroundColor: '#4caf50', borderRadius: 1 }} />
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                backgroundColor: "#4caf50",
+                borderRadius: 1,
+              }}
+            />
             <Typography variant="body2">Renewable energy cost</Typography>
           </Box>
         </Box>
