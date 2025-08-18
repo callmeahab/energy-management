@@ -208,6 +208,20 @@ class Database:
                     connected_data_source_id = excluded.connected_data_source_id,
                     time_zone = excluded.time_zone,
                     type_array = excluded.type_array,
+                    address_id = excluded.address_id,
+                    address_street = excluded.address_street,
+                    address_city = excluded.address_city,
+                    address_state = excluded.address_state,
+                    address_country = excluded.address_country,
+                    address_postal_code = excluded.address_postal_code,
+                    latitude = excluded.latitude,
+                    longitude = excluded.longitude,
+                    gross_area_value = excluded.gross_area_value,
+                    gross_area_unit = excluded.gross_area_unit,
+                    rentable_area_value = excluded.rentable_area_value,
+                    rentable_area_unit = excluded.rentable_area_unit,
+                    usable_area_value = excluded.usable_area_value,
+                    usable_area_unit = excluded.usable_area_unit,
                     date_updated = excluded.date_updated,
                     sync_timestamp = excluded.sync_timestamp
             """,
@@ -752,7 +766,7 @@ class Database:
                 total_kwh = (avg_watts / 1000.0) * 0.5
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO energy_consumption (
+                    INSERT OR IGNORE INTO energy_consumption (
                         id, building_id, floor_id, space_id, timestamp, total_watts, total_kwh, calculation_timestamp
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -767,10 +781,12 @@ class Database:
                         now_iso,
                     ),
                 )
-                records_inserted += 1
+                # Only count inserts that actually occurred (ignored rows mean the interval already exists)
+                if cursor.rowcount and cursor.rowcount > 0:
+                    records_inserted += 1
 
             conn.commit()
             logger.info(
-                f"Backfill complete: {records_inserted} half-hour energy records stored"
+                f"Backfill complete: {records_inserted} new half-hour energy records stored (existing intervals left unchanged)"
             )
             return records_inserted

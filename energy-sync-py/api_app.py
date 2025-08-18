@@ -8,6 +8,7 @@ import sqlite3
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -18,6 +19,9 @@ from database import Database
 
 
 logger = logging.getLogger(__name__)
+
+# Load environment variables from a .env file if present (useful in local development)
+load_dotenv()
 
 
 # ----------------------------------------------------------------------------
