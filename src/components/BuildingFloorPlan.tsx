@@ -139,7 +139,7 @@ const BuildingFloorPlan: React.FC<BuildingFloorPlanProps> = ({ floorId }) => {
   const peopleCount = 144;
 
   const getRoomColor = (temperature: number) => {
-    if (temperature > 80) return "#ffcdd2"; // Light red
+    if (temperature > 80) return "#ffcdd2"; // Light red - keep for temperature data visualization
     if (temperature > 75) return "#fff3e0"; // Light orange
     if (temperature > 70) return "#f3e5f5"; // Light purple
     return "#e8f5e8"; // Light green
@@ -231,7 +231,7 @@ const BuildingFloorPlan: React.FC<BuildingFloorPlanProps> = ({ floorId }) => {
                     width={room.width}
                     height={room.height}
                     fill={getRoomColor(room.temperature)}
-                    stroke="#333"
+                    stroke="currentColor"
                     strokeWidth="2"
                   />
                   <text
@@ -257,7 +257,7 @@ const BuildingFloorPlan: React.FC<BuildingFloorPlanProps> = ({ floorId }) => {
                     textAnchor="middle"
                     fontSize="14"
                     fontWeight="bold"
-                    fill="#1976d2"
+                    fill="primary.main"
                   >
                     {room.temperature}°F /{" "}
                     {Math.round(((room.temperature - 32) * 5) / 9)}°C
@@ -422,7 +422,7 @@ const BuildingFloorPlan: React.FC<BuildingFloorPlanProps> = ({ floorId }) => {
               sx={{
                 width: 12,
                 height: 12,
-                backgroundColor: "#ff9800",
+                backgroundColor: "warning.main",
                 borderRadius: 1,
               }}
             />
@@ -433,7 +433,7 @@ const BuildingFloorPlan: React.FC<BuildingFloorPlanProps> = ({ floorId }) => {
               sx={{
                 width: 12,
                 height: 12,
-                backgroundColor: "#4caf50",
+                backgroundColor: "success.main",
                 borderRadius: 1,
               }}
             />

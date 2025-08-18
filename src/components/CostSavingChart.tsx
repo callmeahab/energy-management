@@ -191,14 +191,14 @@ const CostSavingChart = () => {
                 mb: 3,
                 fontWeight: 600,
                 justifyContent: "center",
-                backgroundColor: "#F9F9F9",
+                backgroundColor: "grey.50",
                 padding: 2,
               }}
             >
               <Box sx={{ textAlign: "center", flex: 1 }}>
                 <Typography
                   variant="body2"
-                  sx={{ fontWeight: 600, color: "#5A6C83" }}
+                  sx={{ fontWeight: 600, color: "text.secondary" }}
                 >
                   An improvement over time based on changes
                 </Typography>
@@ -226,7 +226,7 @@ const CostSavingChart = () => {
                     sx={{
                       width: 16,
                       height: 16,
-                      bgcolor: "#4caf50",
+                      bgcolor: "success.main",
                     }}
                   />
                   <Typography variant="body2" color="text.secondary">
@@ -244,7 +244,7 @@ const CostSavingChart = () => {
                     sx={{
                       width: 16,
                       height: 16,
-                      bgcolor: "#ff9800",
+                      bgcolor: "warning.main",
                     }}
                   />
                   <Typography variant="body2" color="text.secondary">

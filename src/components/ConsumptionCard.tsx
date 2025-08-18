@@ -331,14 +331,14 @@ const ConsumptionCard = () => {
                 mb: 3,
                 fontWeight: 600,
                 justifyContent: "center",
-                backgroundColor: "#F9F9F9",
+                backgroundColor: "grey.50",
                 padding: 2,
               }}
             >
               <Box sx={{ textAlign: "center", flex: 1 }}>
                 <Typography
                   variant="body2"
-                  sx={{ fontWeight: 600, color: "#5A6C83" }}
+                  sx={{ fontWeight: 600, color: "text.secondary" }}
                 >
                   Energy Cost
                 </Typography>
@@ -377,7 +377,7 @@ const ConsumptionCard = () => {
               <Box sx={{ textAlign: "center", flex: 1 }}>
                 <Typography
                   variant="body2"
-                  sx={{ fontWeight: 600, color: "#5A6C83" }}
+                  sx={{ fontWeight: 600, color: "text.secondary" }}
                 >
                   Energy Consumption
                 </Typography>
@@ -438,7 +438,7 @@ const ConsumptionCard = () => {
                     sx={{
                       width: 16,
                       height: 16,
-                      bgcolor: "#ff9800",
+                      bgcolor: "warning.main",
                     }}
                   />
                   <Typography variant="body2" color="text.secondary">
@@ -456,7 +456,7 @@ const ConsumptionCard = () => {
                     sx={{
                       width: 16,
                       height: 16,
-                      bgcolor: "#4caf50",
+                      bgcolor: "success.main",
                     }}
                   />
                   <Typography variant="body2" color="text.secondary">
@@ -478,7 +478,7 @@ const ConsumptionCard = () => {
                       axisLine={true}
                       tickLine={true}
                       tickMargin={8}
-                      tick={{ fontSize: 12, fill: "#666" }}
+                      tick={{ fontSize: 12, fill: "currentColor" }}
                     />
                     <YAxis
                       axisLine={true}
@@ -497,7 +497,7 @@ const ConsumptionCard = () => {
                         }
                       }}
                       tickMargin={8}
-                      tick={{ fontSize: 12, fill: "#666" }}
+                      tick={{ fontSize: 12, fill: "currentColor" }}
                     />
                     <Line
                       type="linear"

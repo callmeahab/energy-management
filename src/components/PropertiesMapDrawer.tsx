@@ -136,15 +136,11 @@ const PropertiesMapDrawer = ({
         <Box sx={{ position: "absolute", top: 16, right: 16, zIndex: 2 }}>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
             <IconButton
+              className="MuiIconButton-bordered"
               sx={{
-                bgcolor: "white",
-                color: "text.primary",
                 boxShadow: 2,
-                border: 1,
-                borderColor: "grey.300",
                 width: 40,
                 height: 40,
-                "&:hover": { bgcolor: "grey.100" },
               }}
               onClick={onClose}
               aria-label="close drawer"
@@ -152,15 +148,11 @@ const PropertiesMapDrawer = ({
               <Close />
             </IconButton>
             <IconButton
+              className="MuiIconButton-bordered"
               sx={{
-                bgcolor: "white",
-                color: "text.primary",
                 boxShadow: 2,
-                border: 1,
-                borderColor: "grey.300",
                 width: 40,
                 height: 40,
-                "&:hover": { bgcolor: "grey.100" },
               }}
               aria-label="properties list"
               onClick={handleMenuOpen}

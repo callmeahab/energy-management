@@ -25,6 +25,10 @@ import AlertsCard from "./AlertsCard";
 import EfficiencyCard from "./EfficiencyCard";
 import BuildingFloorPlan from "./BuildingFloorPlan";
 import PropertiesMapDrawer from "./PropertiesMapDrawer";
+import DarkModeToggle from "./DarkModeToggle";
+import ThemeLogo from "./ThemeLogo";
+import ThemeAiIcon from "./ThemeAiIcon";
+import ThemeLocationIcon from "./ThemeLocationIcon";
 
 const DRAWER_WIDTH = 650;
 
@@ -75,12 +79,7 @@ const EnergyDashboard = () => {
             }}
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-              <Image
-                src="/logo.svg"
-                alt="Energy App Logo"
-                width={44}
-                height={44}
-              />
+              <ThemeLogo width={44} height={44} />
 
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
                 <ButtonGroup variant="text" sx={{ gap: 0, border: "none" }}>
@@ -115,32 +114,21 @@ const EnergyDashboard = () => {
             </Box>
 
             <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <DarkModeToggle />
+              
               <IconButton
                 onClick={() => {}}
-                sx={{
-                  border: 1,
-                  borderColor: "#DBDBDB",
-                  backgroundColor: "#ffffff",
-                }}
+                className="MuiIconButton-bordered"
               >
-                <Image src="/ai.svg" alt="Location" width={24} height={24} />
+                <ThemeAiIcon width={24} height={24} />
               </IconButton>
 
               <IconButton
                 onClick={() => setPropertiesDrawerOpen(true)}
-                sx={{
-                  border: 1,
-                  borderColor: "#DBDBDB",
-                  backgroundColor: "#ffffff",
-                }}
+                className="MuiIconButton-bordered"
               >
                 <Badge badgeContent={buildings.length} color="primary">
-                  <Image
-                    src="/location.svg"
-                    alt="Location"
-                    width={24}
-                    height={24}
-                  />
+                  <ThemeLocationIcon width={24} height={24} />
                 </Badge>
               </IconButton>
             </Box>

@@ -59,15 +59,11 @@ const LayerControls: React.FC<LayerControlsProps> = ({
       <IconButton
         aria-label="map layers"
         onClick={handleClick}
+        className="MuiIconButton-bordered"
         sx={{
-          bgcolor: "white",
-          color: "text.primary",
           boxShadow: 2,
-          border: 1,
-          borderColor: "grey.300",
           width: 40,
           height: 40,
-          "&:hover": { bgcolor: "grey.100" },
         }}
       >
         <Layers fontSize="small" />

@@ -15,6 +15,7 @@ import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import { ScatterplotLayer, IconLayer } from "@deck.gl/layers";
 import { Box } from "@mui/material";
 import "mapbox-gl/dist/mapbox-gl.css";
+import { useTheme } from '@/contexts/ThemeContext';
 import {
   generatePropertyIcon,
   computePropertyBounds,
@@ -47,6 +48,7 @@ const MapContainer = ({
   selectedProperty = null,
   onPropertySelect,
 }: MapContainerProps) => {
+  const { mode } = useTheme();
   const [viewState, setViewState] = useState<BasicViewState>({
     longitude: -98.5795,
     latitude: 39.8283,
@@ -431,7 +433,7 @@ const MapContainer = ({
       <Map
         initialViewState={viewState}
         onMove={(evt) => setViewState(evt.viewState)}
-        mapStyle="mapbox://styles/mapbox/navigation-day-v1"
+        mapStyle={mode === 'dark' ? "mapbox://styles/mapbox/navigation-night-v1" : "mapbox://styles/mapbox/navigation-day-v1"}
         projection="mercator"
         mapboxAccessToken={MAPBOX_ACCESS_TOKEN}
         maxZoom={20}
